@@ -72,7 +72,10 @@ test('pengeluaran makan: siklus dibuat otomatis, peringatan budget harian', { sk
     account_id: acc['Rek. utama'], category_id: cat['Makan dan Minum'], note: 'Makan siang' });
   assert.equal(a.statusCode, 201, a.body);
   assert.equal(a.json().cycle.start, '2026-10-25');
-  assert.deepEqual(a.json().daily_budget, { date: '2026-11-16', day_type: 'weekday', limit: 300000, total: 250000, over: 0 });
+  assert.deepEqual(a.json().daily_budget, {
+    category_id: cat['Makan dan Minum'], category_name: 'Makan dan Minum',
+    date: '2026-11-16', day_type: 'weekday', limit: 300000, total: 250000, over: 0,
+  });
   assert.equal(a.json().item.recorded_by, 'Erik');
 
   const b = await post({ kind: 'expense', amount: 100000, trx_date: '2026-11-16',
@@ -156,4 +159,43 @@ test('daftar transaksi terbaru, yang terhapus tidak tampil', { skip }, async () 
   assert.ok(!items.some((t) => t.is_emergency_withdrawal));
   const dates = items.map((t) => t.trx_date);
   assert.deepEqual(dates, [...dates].sort().reverse());
+});
+
+test('ringkasan beranda: pemasukan, pengeluaran, darurat, tabungan', { skip }, async () => {
+  const start = '2026-10-25'; // siklus yang memuat 16 Nov 2026
+  const em = await post({ kind: 'expense', amount: 1200000, trx_date: '2026-11-17',
+    account_id: acc['Rek. utama'], category_id: cat['Kesehatan'], from_emergency: true });
+  assert.equal(em.statusCode, 201);
+  const gaji = await post({ kind: 'income', amount: 25000000, trx_date: '2026-10-24',
+    account_id: acc['Rek. utama'], category_id: cat['Gaji'] });
+  assert.equal(gaji.json().cycle.start, start);
+
+  const s = (await app.inject({ url: `/api/summary?cycle=${start}`, cookies: { sid } })).json();
+  assert.equal(s.restricted, false);
+  assert.equal(s.cycle.label, '25 Okt – 24 Nov 2026');
+  // Pengeluaran siklus ini: 250rb + 100rb + 210rb (makan) + 1,2jt (darurat). Transfer 500rb tidak dihitung.
+  assert.deepEqual(s.totals, { income: 25000000, expense: 1760000, remaining: 23240000 });
+  assert.deepEqual(s.emergency, { name: 'Rekening darurat', target: 10000000, open_debt: 1200000, filled: 8800000 });
+  assert.equal(s.savings.deposited, 500000); // transfer ke Emas
+  assert.equal(s.bills.count, 0);
+  assert.ok(s.cycles.some((c) => c.start === start));
+
+  const list = (await app.inject({ url: `/api/trx?cycle=${start}&limit=50`, cookies: { sid } })).json();
+  assert.ok(list.items.every((t) => t.trx_date >= '2026-10-24' && t.trx_date <= '2026-11-24'));
+  const other = (await app.inject({ url: '/api/trx?cycle=2025-08-25', cookies: { sid } })).json();
+  assert.deepEqual(other.items.map((t) => t.trx_date), ['2025-08-24']);
+
+  const bad = await app.inject({ url: '/api/summary?cycle=2026-11-03', cookies: { sid } });
+  assert.equal(bad.statusCode, 400);
+});
+
+test('anak tidak mendapat angka laporan, saldo, darurat, tabungan', { skip }, async () => {
+  const anak = (await pool.query(`select id from app_user where role = 'anak'`)).rows[0];
+  const token = newSessionToken();
+  await pool.query(`insert into session (token_hash, user_id, expires_at) values ($1, $2, now() + interval '1 day')`,
+    [hashToken(token), anak.id]);
+  const s = (await app.inject({ url: '/api/summary', cookies: { sid: token } })).json();
+  assert.equal(s.restricted, true);
+  for (const k of ['totals', 'emergency', 'savings', 'bills', 'cycles']) assert.equal(s[k], undefined, k);
+  assert.ok(Array.isArray(s.daily_budgets));
 });

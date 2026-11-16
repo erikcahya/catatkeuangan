@@ -1,7 +1,8 @@
 import { withTx } from '../db.js';
 import { HttpError } from '../lib/errors.js';
+import { dailyBudgets } from '../lib/budget.js';
 import {
-  cycleEnd, cycleLabel, cycleStart, dayType, isValidDate, salaryCycleStart,
+  cycleEnd, cycleLabel, cycleStart, isValidDate, salaryCycleStart,
 } from '../lib/dates.js';
 
 const SALARY_CATEGORY = 'Gaji';
@@ -23,25 +24,6 @@ async function ensureCycle(c, householdId, start) {
     [householdId, start],
   );
   return sel.rows[0].id;
-}
-
-/** Status budget makan harian untuk kategori dan tanggal itu, atau null bila tidak ada batas. */
-async function dailyBudgetStatus(c, householdId, categoryId, date) {
-  const type = dayType(date);
-  const { rows } = await c.query(
-    `select db.limit_amount,
-            coalesce((select sum(t.amount)
-                        from trx t join account a on a.id = t.account_id
-                       where a.household_id = $1 and t.category_id = $2
-                         and t.trx_date = $3 and t.kind = 'expense'
-                         and t.deleted_at is null), 0) as total
-       from daily_budget db
-      where db.household_id = $1 and db.category_id = $2 and db.day_type = $4`,
-    [householdId, categoryId, date, type],
-  );
-  if (!rows.length) return null;
-  const { limit_amount: limit, total } = rows[0];
-  return { date, day_type: type, limit, total, over: Math.max(0, total - limit) };
 }
 
 const LIST_SQL = `
@@ -68,13 +50,19 @@ export default async function trxRoutes(app) {
     schema: {
       querystring: {
         type: 'object',
-        properties: { limit: { type: 'integer', minimum: 1, maximum: 200, default: 20 } },
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: 200, default: 20 },
+          cycle: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, // awal siklus, opsional
+        },
       },
     },
   }, async (req) => {
     const { rows } = await pool.query(
-      `${LIST_SQL} order by t.trx_date desc, t.created_at desc limit $2`,
-      [req.user.household_id, req.query.limit],
+      `${LIST_SQL}
+         and ($3::date is null or t.cycle_id in
+              (select id from pay_cycle where household_id = $1 and start_date = $3::date))
+       order by t.trx_date desc, t.created_at desc limit $2`,
+      [req.user.household_id, req.query.limit, req.query.cycle ?? null],
     );
     return { items: rows };
   });
@@ -162,7 +150,7 @@ export default async function trxRoutes(app) {
       }
 
       const daily = b.kind === 'expense'
-        ? await dailyBudgetStatus(c, u.household_id, categoryId, b.trx_date)
+        ? (await dailyBudgets(c, u.household_id, b.trx_date, categoryId))[0] ?? null
         : null;
       const item = (await c.query(`${LIST_SQL} and t.id = $2`, [u.household_id, id])).rows[0];
       return { item, cycle: { start, label: cycleLabel(start) }, daily_budget: daily };

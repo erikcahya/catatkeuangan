@@ -64,6 +64,12 @@ Ditandai: **[pasti]** = disebut langsung oleh pemilik; **[asumsi]** = tafsiran s
 6. Laporan siklus
 7. Anggota keluarga
 
+## Beranda: cara menghitung angka
+- **[asumsi]** Anggaran siklus = total pemasukan siklus itu. Sisa = pemasukan - pengeluaran. Transfer tidak dihitung.
+- **[asumsi]** Rekening darurat "terisi" = target - utang yang belum lunas (saldo awal rekening tidak dicatat di aplikasi).
+- **[asumsi]** Tabungan "disetor siklus ini" = transfer ke rekening berjenis `asset` pada siklus itu. Pengeluaran berkategori Investasi tidak ikut dihitung (keputusan kategori Investasi masih terbuka).
+- Anak (`can_view_reports = false`) hanya melihat budget makan hari ini dan transaksi terbaru; API tidak mengirim angka lainnya.
+
 ## Impor catatan lama
 Catatan lama punya kolom: tanggal, kategori, keterangan, sumber, jumlah (bertanda plus atau minus). Aturan impor:
 - Tanda jumlah menentukan pemasukan atau pengeluaran.

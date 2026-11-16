@@ -8,6 +8,8 @@ const ICON = {
   close: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   plus: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
   trash: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>',
+  chevron: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
+  warn: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.5v.01"/></svg>',
 };
 
 // ---------- API ----------
@@ -97,15 +99,18 @@ function renderLogin() {
   });
 }
 
-// ---------- Layar: beranda (sementara) ----------
-// Beranda lengkap (layar 2) belum dibuat. Untuk sekarang: siklus berjalan dan transaksi terbaru.
+// ---------- Layar 2: beranda ----------
 
-function trxLine(t) {
+let selectedCycle = null; // awal siklus yang dipilih; null = siklus berjalan
+
+const pct = (part, whole) => (whole > 0 ? Math.min(100, Math.max(0, (part / whole) * 100)) : 0);
+
+function trxLine(t, { withDelete = true } = {}) {
   const sign = t.kind === 'income' ? '+' : t.kind === 'expense' ? '−' : '';
   const name = t.note || (t.kind === 'transfer' ? `Transfer ke ${t.to_account_name}` : t.category_name);
   const where = t.kind === 'transfer'
     ? `Transfer · ${t.account_name} → ${t.to_account_name}`
-    : t.is_emergency_withdrawal ? 'Utang ke rekening darurat' : `${t.category_name} · ${t.account_name}`;
+    : t.is_emergency_withdrawal ? `${t.category_name} · utang ke rekening darurat` : `${t.category_name} · ${t.account_name}`;
   return `<li class="trx-item">
     <div class="main">
       <span class="name">${esc(name)}</span>
@@ -113,33 +118,129 @@ function trxLine(t) {
     </div>
     <div class="right">
       <span class="amt${t.kind === 'income' ? ' in' : ''}">${sign}${rupiah(t.amount)}</span>
-      <button class="del" data-del="${esc(t.id)}" aria-label="Hapus ${esc(name)}">${ICON.trash}</button>
+      ${withDelete ? `<button class="del" data-del="${esc(t.id)}" aria-label="Hapus ${esc(name)}">${ICON.trash}</button>` : ''}
     </div>
   </li>`;
 }
 
+function cycleCard(s) {
+  const { income, expense, remaining } = s.totals;
+  const c = s.cycle;
+  const when = c.status === 'current'
+    ? (c.days_left === 0 ? 'hari terakhir' : `${c.days_left} hari lagi`)
+    : c.status === 'past' ? 'siklus selesai' : 'siklus mendatang';
+  const used = pct(expense, income);
+  return `<section class="hero" aria-label="Sisa anggaran siklus">
+      <span class="hero-label">Sisa anggaran siklus ini</span>
+      <span class="hero-amount${remaining < 0 ? ' neg' : ''}">${remaining < 0 ? '−' : ''}${rupiah(remaining)}</span>
+      <div class="hero-track" role="img" aria-label="Terpakai ${Math.round(used)} persen"><div style="width:${used}%"></div></div>
+      <span class="hero-label">${income > 0
+        ? `Terpakai ${rupiah(expense)} dari ${rupiah(income)} · ${when}`
+        : `Belum ada pemasukan di siklus ini · ${when}`}</span>
+    </section>
+    <div class="tiles">
+      <div class="tile"><span class="tile-label">Pemasukan</span><span class="tile-value in">${rupiah(income)}</span></div>
+      <div class="tile"><span class="tile-label">Pengeluaran</span><span class="tile-value">${rupiah(expense)}</span></div>
+    </div>`;
+}
+
+function dailyCard(d) {
+  const over = d.over > 0;
+  const okPart = over ? pct(d.limit, d.total) : pct(d.total, d.limit);
+  const hari = d.day_type === 'weekend' ? 'Akhir pekan' : 'Hari kerja';
+  return `<section class="card daily${over ? ' over' : ''}" aria-label="Budget ${esc(d.category_name)} hari ini">
+    <div class="daily-head">
+      <span class="daily-title">Budget makan hari ini</span>
+      <span class="tile-label">${hari} · ${rupiah(d.limit)}</span>
+    </div>
+    <div class="daily-track" role="img" aria-label="${rupiah(d.total)} dari ${rupiah(d.limit)}">
+      <div class="ok" style="width:${okPart}%"></div>
+      ${over ? `<div class="bad" style="left:${okPart}%;width:${100 - okPart}%"></div><div class="mark" style="left:${okPart}%"></div>` : ''}
+    </div>
+    <div class="daily-foot">
+      ${over
+        ? `<span class="daily-warn">${ICON.warn} Melebihi ${rupiah(d.over)}</span>`
+        : `<span class="tile-label">Sisa ${rupiah(d.limit - d.total)}</span>`}
+      <span class="tile-label">Terpakai ${rupiah(d.total)}</span>
+    </div>
+  </section>`;
+}
+
+function emergencyCard(e) {
+  return `<section class="card emergency-card" aria-label="${esc(e.name)}">
+    <div class="daily-head">
+      <span class="daily-title">${esc(e.name)}</span>
+      <span class="warn-text">${e.open_debt > 0 ? `Utang belum lunas ${rupiah(e.open_debt)}` : 'Tidak ada utang'}</span>
+    </div>
+    <div class="em-track"><div style="width:${pct(e.filled, e.target)}%"></div></div>
+    <span class="tile-label">Terisi ${rupiah(e.filled)} dari target ${rupiah(e.target)}${e.open_debt > 0 ? ' · isi ulang saat gajian' : ''}</span>
+  </section>`;
+}
+
+function billsAndSavings(s) {
+  const b = s.bills;
+  const billNote = b.count === 0 ? 'Belum diatur'
+    : b.unpaid_count > 0 ? `${b.unpaid_count} belum dibayar` : 'Semua lunas';
+  return `<div class="tiles">
+    <div class="tile">
+      <span class="tile-label">Tagihan berulang</span>
+      <span class="tile-value small">${rupiah(b.total)}</span>
+      <span class="${b.unpaid_count > 0 ? 'warn-text' : 'tile-label'} tiny">${billNote}</span>
+    </div>
+    <div class="tile">
+      <span class="tile-label">Tabungan dan investasi</span>
+      <span class="tile-value small">${rupiah(s.savings.deposited)}</span>
+      <span class="in tiny">Disetor siklus ini</span>
+    </div>
+  </div>`;
+}
+
 async function renderHome() {
   const m = await loadMeta();
-  const { items } = await api('/api/trx?limit=30');
+  const q = selectedCycle ? `?cycle=${selectedCycle}` : '';
+  const [s, list] = await Promise.all([
+    api(`/api/summary${q}`),
+    api(`/api/trx?limit=10&cycle=${selectedCycle ?? m.cycle.start}`),
+  ]);
+  const items = list.items;
+
+  const cyclePicker = s.restricted ? '' : `<label class="icon-btn picker" title="Ganti siklus">
+      ${ICON.chevron}
+      <select id="cycle-select" aria-label="Ganti siklus">
+        ${s.cycles.map((c) => `<option value="${esc(c.start)}"${c.start === s.cycle.start ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}
+      </select>
+    </label>`;
+
   app.innerHTML = `<div class="screen">
-    <div class="screen-body">
+    <div class="screen-body home">
       <div class="topbar">
-        <div><div class="eyebrow">Siklus gajian</div><h1 class="title">${esc(m.cycle.label)}</h1></div>
-        <button class="avatar" id="logout" aria-label="Keluar (login sebagai ${esc(m.user.name)})" title="Keluar">${esc(m.user.name[0] ?? '?')}</button>
+        <div><div class="eyebrow">Siklus gajian</div><h1 class="title">${esc(s.cycle.label)}</h1></div>
+        <div class="topbar-actions">
+          <button class="avatar" id="logout" aria-label="Keluar (login sebagai ${esc(m.user.name)})" title="Keluar">${esc(m.user.name[0] ?? '?')}</button>
+          ${cyclePicker}
+        </div>
       </div>
-      <div class="note-box">Ringkasan beranda (anggaran, budget makan, rekening darurat) menyusul di tahap berikutnya.</div>
+      ${s.restricted ? '' : cycleCard(s)}
+      ${s.cycle.status === 'current' ? s.daily_budgets.map(dailyCard).join('') : ''}
+      ${s.restricted || !s.emergency ? '' : emergencyCard(s.emergency)}
+      ${s.restricted ? '' : billsAndSavings(s)}
       <div class="section-head"><h2>Transaksi terbaru</h2></div>
       ${items.length
-        ? `<ul class="trx-list">${items.map(trxLine).join('')}</ul>`
-        : '<p class="empty">Belum ada transaksi. Tekan + untuk mencatat.</p>'}
+        ? `<ul class="trx-list">${items.map((t) => trxLine(t)).join('')}</ul>`
+        : '<p class="empty">Belum ada transaksi di siklus ini. Tekan + untuk mencatat.</p>'}
     </div>
     ${tabbar('#/')}
   </div>`;
 
+  document.getElementById('cycle-select')?.addEventListener('change', (e) => {
+    selectedCycle = e.target.value === m.cycle.start ? null : e.target.value;
+    renderHome();
+  });
   document.getElementById('logout').addEventListener('click', async () => {
     if (!confirm(`Keluar dari akun ${m.user.name}?`)) return;
     await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
     meta = null;
+    selectedCycle = null;
     location.hash = '#/login';
   });
   app.querySelectorAll('[data-del]').forEach((btn) => btn.addEventListener('click', async () => {
