@@ -1,0 +1,332 @@
+import { rupiah, parseRupiah, tanggal, esc } from './format.js';
+
+const app = document.getElementById('app');
+const toastEl = document.getElementById('toast');
+let meta = null; // { user, today, cycle, accounts, categories }
+
+const ICON = {
+  close: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  plus: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
+  trash: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>',
+};
+
+// ---------- API ----------
+
+class ApiError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
+async function api(path, { method = 'GET', body } = {}) {
+  const res = await fetch(path, {
+    method,
+    headers: body ? { 'content-type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
+    credentials: 'same-origin',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && path !== '/api/auth/login') {
+    meta = null;
+    location.hash = '#/login';
+    throw new ApiError(401, data.error || 'Silakan login dulu.');
+  }
+  if (!res.ok) throw new ApiError(res.status, data.error || `Gagal (${res.status})`);
+  return data;
+}
+
+async function loadMeta() {
+  if (!meta) meta = await api('/api/meta');
+  return meta;
+}
+
+// ---------- UI kecil ----------
+
+let toastTimer;
+function toast(msg, { warn = false } = {}) {
+  toastEl.textContent = msg;
+  toastEl.className = warn ? 'warn' : '';
+  toastEl.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toastEl.hidden = true; }, warn ? 6000 : 3000);
+}
+
+function tabbar(active) {
+  const link = (hash, label) =>
+    `<a href="${hash}"${active === hash ? ' aria-current="page"' : ''}>${label}</a>`;
+  // Layar lain belum dibuat; ditampilkan redup supaya letaknya sesuai desain.
+  return `<nav class="tabbar" aria-label="Navigasi utama">
+    ${link('#/', 'Beranda')}
+    <span aria-disabled="true" title="Belum tersedia">Transaksi</span>
+    <a class="fab" href="#/tambah" aria-label="Tambah transaksi">${ICON.plus}</a>
+    <span aria-disabled="true" title="Belum tersedia">Darurat</span>
+    <span aria-disabled="true" title="Belum tersedia">Laporan</span>
+  </nav>`;
+}
+
+// ---------- Layar: login ----------
+
+function renderLogin() {
+  app.innerHTML = `<div class="screen"><form class="screen-body login" id="login-form" novalidate>
+    <h1>Catat Keuangan</h1>
+    <p class="eyebrow">Masuk dengan akun anggota keluarga.</p>
+    <div id="login-err" class="error" hidden></div>
+    <div class="card rows">
+      <div class="field"><label for="email">Email</label>
+        <input id="email" type="email" autocomplete="username" required></div>
+      <div class="field"><label for="password">Kata sandi</label>
+        <input id="password" type="password" autocomplete="current-password" required></div>
+    </div>
+    <button class="btn-primary" type="submit">Masuk</button>
+  </form></div>`;
+  const form = document.getElementById('login-form');
+  const err = document.getElementById('login-err');
+  form.email.focus();
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = form.querySelector('button');
+    btn.disabled = true;
+    err.hidden = true;
+    try {
+      await api('/api/auth/login', { method: 'POST', body: { email: form.email.value, password: form.password.value } });
+      meta = null;
+      location.hash = '#/';
+    } catch (ex) {
+      err.textContent = ex.message;
+      err.hidden = false;
+      btn.disabled = false;
+    }
+  });
+}
+
+// ---------- Layar: beranda (sementara) ----------
+// Beranda lengkap (layar 2) belum dibuat. Untuk sekarang: siklus berjalan dan transaksi terbaru.
+
+function trxLine(t) {
+  const sign = t.kind === 'income' ? '+' : t.kind === 'expense' ? '−' : '';
+  const name = t.note || (t.kind === 'transfer' ? `Transfer ke ${t.to_account_name}` : t.category_name);
+  const where = t.kind === 'transfer'
+    ? `Transfer · ${t.account_name} → ${t.to_account_name}`
+    : t.is_emergency_withdrawal ? 'Utang ke rekening darurat' : `${t.category_name} · ${t.account_name}`;
+  return `<li class="trx-item">
+    <div class="main">
+      <span class="name">${esc(name)}</span>
+      <span class="meta${t.is_emergency_withdrawal ? ' warn' : ''}">${esc(where)} · ${esc(tanggal(t.trx_date))} · oleh ${esc(t.recorded_by)}</span>
+    </div>
+    <div class="right">
+      <span class="amt${t.kind === 'income' ? ' in' : ''}">${sign}${rupiah(t.amount)}</span>
+      <button class="del" data-del="${esc(t.id)}" aria-label="Hapus ${esc(name)}">${ICON.trash}</button>
+    </div>
+  </li>`;
+}
+
+async function renderHome() {
+  const m = await loadMeta();
+  const { items } = await api('/api/trx?limit=30');
+  app.innerHTML = `<div class="screen">
+    <div class="screen-body">
+      <div class="topbar">
+        <div><div class="eyebrow">Siklus gajian</div><h1 class="title">${esc(m.cycle.label)}</h1></div>
+        <button class="avatar" id="logout" aria-label="Keluar (login sebagai ${esc(m.user.name)})" title="Keluar">${esc(m.user.name[0] ?? '?')}</button>
+      </div>
+      <div class="note-box">Ringkasan beranda (anggaran, budget makan, rekening darurat) menyusul di tahap berikutnya.</div>
+      <div class="section-head"><h2>Transaksi terbaru</h2></div>
+      ${items.length
+        ? `<ul class="trx-list">${items.map(trxLine).join('')}</ul>`
+        : '<p class="empty">Belum ada transaksi. Tekan + untuk mencatat.</p>'}
+    </div>
+    ${tabbar('#/')}
+  </div>`;
+
+  document.getElementById('logout').addEventListener('click', async () => {
+    if (!confirm(`Keluar dari akun ${m.user.name}?`)) return;
+    await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    meta = null;
+    location.hash = '#/login';
+  });
+  app.querySelectorAll('[data-del]').forEach((btn) => btn.addEventListener('click', async () => {
+    if (!confirm('Hapus transaksi ini?')) return;
+    try {
+      await api(`/api/trx/${btn.dataset.del}`, { method: 'DELETE' });
+      toast('Transaksi dihapus.');
+      renderHome();
+    } catch (ex) {
+      toast(ex.message, { warn: true });
+    }
+  }));
+}
+
+// ---------- Layar 1: tambah transaksi ----------
+
+const KIND_LABEL = { expense: 'Pengeluaran', income: 'Pemasukan', transfer: 'Transfer' };
+
+async function renderAdd() {
+  const m = await loadMeta();
+  const regular = m.accounts.filter((a) => !a.is_emergency);
+  const emergency = m.accounts.find((a) => a.is_emergency);
+  const state = { kind: 'expense' };
+
+  const options = (list, selected) => list
+    .map((x) => `<option value="${esc(x.id)}"${x.id === selected ? ' selected' : ''}>${esc(x.name)}</option>`)
+    .join('');
+
+  app.innerHTML = `<form class="screen" id="add-form" novalidate>
+    <div class="screen-body">
+      <div class="topbar">
+        <h1 class="title">Tambah transaksi</h1>
+        <a class="icon-btn" href="#/" aria-label="Tutup">${ICON.close}</a>
+      </div>
+      <div class="segmented" role="group" aria-label="Jenis transaksi">
+        ${Object.entries(KIND_LABEL).map(([k, label]) =>
+          `<button type="button" data-kind="${k}" aria-pressed="${k === state.kind}">${label}</button>`).join('')}
+      </div>
+      <div id="add-err" class="error" hidden></div>
+      <div class="card field amount">
+        <label for="amount">Jumlah</label>
+        <input id="amount" name="amount" inputmode="numeric" autocomplete="off" placeholder="Rp 0" required>
+      </div>
+      <div class="card rows">
+        <div class="row" id="row-category">
+          <label for="category">Kategori</label>
+          <select id="category" name="category"></select>
+        </div>
+        <div class="row" id="row-account">
+          <label for="account" id="account-label">Dari rekening</label>
+          <select id="account" name="account">${options(regular, regular[0]?.id)}</select>
+        </div>
+        <div class="row" id="row-emergency-account" hidden>
+          <span class="label">Dari rekening</span>
+          <span class="value">${esc(emergency?.name ?? '—')}</span>
+        </div>
+        <div class="row" id="row-to" hidden>
+          <label for="to_account">Ke rekening</label>
+          <select id="to_account" name="to_account">${options(m.accounts, emergency?.id ?? m.accounts[1]?.id)}</select>
+        </div>
+        <div class="row">
+          <label for="trx_date">Tanggal</label>
+          <input id="trx_date" name="trx_date" type="date" value="${esc(m.today)}" required>
+        </div>
+        <div class="row">
+          <span class="label">Dicatat oleh</span>
+          <span class="value">${esc(m.user.name)}</span>
+        </div>
+      </div>
+      <div class="card field">
+        <label for="note">Catatan</label>
+        <input id="note" name="note" maxlength="300" autocomplete="off" placeholder="Contoh: Listrik">
+      </div>
+      <div class="card rows" id="expense-toggles">
+        <label class="row toggle">
+          <span>Pengeluaran sekali bayar</span>
+          <input type="checkbox" name="is_one_off">
+        </label>
+        ${emergency ? `<label class="row toggle emergency">
+          <span class="text">
+            <span>Ambil dari rekening darurat</span>
+            <span class="hint">Dicatat sebagai utang, dilunasi saat gajian</span>
+          </span>
+          <input type="checkbox" name="from_emergency">
+        </label>` : ''}
+      </div>
+    </div>
+    <div class="footer"><button class="btn-primary" type="submit">Simpan transaksi</button></div>
+  </form>`;
+
+  const form = document.getElementById('add-form');
+  const err = document.getElementById('add-err');
+  const show = (id, on) => { document.getElementById(id).hidden = !on; };
+
+  function sync() {
+    const k = state.kind;
+    form.querySelectorAll('[data-kind]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.kind === k)));
+    const cats = m.categories.filter((c) => c.kind === k);
+    const prev = form.category.value;
+    form.category.innerHTML = options(cats, cats.some((c) => c.id === prev) ? prev : cats[0]?.id);
+    const fromEm = k === 'expense' && form.from_emergency?.checked;
+    show('row-category', k !== 'transfer');
+    show('row-to', k === 'transfer');
+    show('expense-toggles', k === 'expense');
+    show('row-account', !fromEm);
+    show('row-emergency-account', fromEm);
+    document.getElementById('account-label').textContent = k === 'income' ? 'Ke rekening' : 'Dari rekening';
+    // Transfer boleh dari rekening mana pun, termasuk rekening darurat.
+    const accList = k === 'transfer' ? m.accounts : regular;
+    const prevAcc = form.account.value;
+    form.account.innerHTML = options(accList, accList.some((a) => a.id === prevAcc) ? prevAcc : accList[0]?.id);
+  }
+
+  form.querySelectorAll('[data-kind]').forEach((b) => b.addEventListener('click', () => {
+    state.kind = b.dataset.kind;
+    sync();
+  }));
+  form.from_emergency?.addEventListener('change', sync);
+  form.amount.addEventListener('input', () => {
+    const n = parseRupiah(form.amount.value);
+    form.amount.value = n ? rupiah(n) : '';
+  });
+  sync();
+  form.amount.focus();
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    err.hidden = true;
+    const amount = parseRupiah(form.amount.value);
+    const fail = (msg, el) => { err.textContent = msg; err.hidden = false; el?.focus(); };
+    if (!amount) return fail('Isi jumlahnya dulu.', form.amount);
+    if (!form.trx_date.value) return fail('Isi tanggalnya.', form.trx_date);
+    if (state.kind === 'transfer' && form.account.value === form.to_account.value) {
+      return fail('Rekening asal dan tujuan harus berbeda.', form.to_account);
+    }
+
+    const isExpense = state.kind === 'expense';
+    const body = {
+      kind: state.kind,
+      amount,
+      trx_date: form.trx_date.value,
+      account_id: form.account.value || null,
+      to_account_id: state.kind === 'transfer' ? form.to_account.value : null,
+      category_id: state.kind === 'transfer' ? null : form.category.value,
+      note: form.note.value.trim() || null,
+      is_one_off: isExpense && form.is_one_off.checked,
+      from_emergency: isExpense && !!form.from_emergency?.checked,
+    };
+    const btn = form.querySelector('[type="submit"]');
+    btn.disabled = true;
+    try {
+      const res = await api('/api/trx', { method: 'POST', body });
+      location.hash = '#/';
+      const d = res.daily_budget;
+      if (d && d.over > 0) {
+        toast(`Budget makan ${tanggal(d.date)} terlewati ${rupiah(d.over)} (total ${rupiah(d.total)} dari ${rupiah(d.limit)}).`, { warn: true });
+      } else {
+        toast(`Tersimpan di siklus ${res.cycle.label}.`);
+      }
+    } catch (ex) {
+      btn.disabled = false;
+      fail(ex.message);
+    }
+  });
+}
+
+// ---------- Router ----------
+
+const routes = { '#/': renderHome, '#/tambah': renderAdd, '#/login': renderLogin };
+
+async function route() {
+  const render = routes[location.hash] ?? renderHome;
+  try {
+    await render();
+  } catch (ex) {
+    if (ex.status === 401) return; // sudah dialihkan ke login
+    app.innerHTML = `<div class="screen"><div class="screen-body">
+      <div class="error">${esc(ex.message)}</div>
+      <button class="btn-primary" type="button" id="retry">Coba lagi</button>
+    </div></div>`;
+    document.getElementById('retry').addEventListener('click', route);
+  }
+}
+
+window.addEventListener('hashchange', route);
+route();
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}

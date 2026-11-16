@@ -3,7 +3,7 @@
 Aplikasi kecil untuk satu rumah tangga (suami, istri, anak). Dokumen ini adalah konteks untuk Claude Code di VS Code.
 
 Desain layar: https://claude.ai/artifact/XzJgVuup3NgEQpHiMdW3im (7 layar, angka di dalamnya hanya contoh).
-Skema: `schema.sql`. Data awal: `seed.sql`.
+Skema: `db/migrations/001_schema.sql`. Data awal: `db/migrations/002_seed.sql`. Cara menjalankan: `README.md`.
 
 ## Stack (rekomendasi, bukan keputusan final)
 
@@ -20,6 +20,7 @@ Ditandai: **[pasti]** = disebut langsung oleh pemilik; **[asumsi]** = tafsiran s
 ### Siklus gajian
 - **[pasti]** Gajian tiap tanggal 25. Satu siklus berjalan 25 sampai 24 bulan berikutnya. Fungsi SQL `cycle_start(date, payday)` menghitung awal siklus.
 - **[pasti]** Gaji yang cair tidak tepat tanggal 25 (misalnya 24 Agu atau 4 Okt) tetap masuk siklus bulan gajiannya. Pada impor, kategori Gaji ditetapkan ke siklus bulan gajiannya, bukan dari tanggal transaksi.
+- **[asumsi]** Pada input manual aturan yang sama dipakai: transaksi kategori Gaji masuk siklus dengan tanggal gajian terdekat (24 Agu -> siklus 25 Agu, 4 Okt -> siklus 25 Sep).
 - **[asumsi]** `pay_cycle` dibuat otomatis saat transaksi pertama pada siklus itu dicatat.
 
 ### Rekening darurat
@@ -45,13 +46,14 @@ Ditandai: **[pasti]** = disebut langsung oleh pemilik; **[asumsi]** = tafsiran s
 - **[asumsi]** Hari kerja = Senin sampai Jumat, dihitung dengan zona waktu Asia/Jakarta.
 
 ### Anggota dan izin
+- **[pasti]** Login dengan email dan kata sandi (diputuskan 16 Nov 2026). Sesi berlaku 90 hari, disimpan di tabel `session` (`db/migrations/003_auth.sql`).
 - **[pasti]** Semua anggota saling melihat transaksi, dan tiap transaksi menampilkan pencatatnya (`trx.user_id`).
 - **[pasti]** Anak hanya boleh mencatat. Mengubah dan menghapus boleh untuk semua anggota.
 - **[asumsi]** Anak tidak melihat laporan, saldo, rekening darurat, dan tabungan (`can_view_reports = false`). Anak melihat daftar transaksi agar bisa mengubah dan menghapus.
 - Penghapusan bersifat lunak (`deleted_at`). Pengubahan mengisi `updated_by` dan `updated_at`.
 
 ### Kategori
-- 19 kategori pengeluaran dan 4 pemasukan, lihat `seed.sql`. Struktur induk dan sub-kategori didukung (`parent_id`) tetapi belum dipakai.
+- 19 kategori pengeluaran dan 4 pemasukan, lihat `db/migrations/002_seed.sql`. Struktur induk dan sub-kategori didukung (`parent_id`) tetapi belum dipakai.
 
 ## Layar (urutan pengerjaan)
 1. Tambah transaksi
@@ -73,6 +75,6 @@ Catatan lama punya kolom: tanggal, kategori, keterangan, sumber, jumlah (bertand
 - Pencatat transaksi lama: tetapkan ke satu pengguna tetap, karena data lama tidak mencatatnya.
 
 ## Belum diputuskan
-- Metode login (email dan kata sandi, atau tautan sihir) serta alur mengundang anggota. Kolom `app_user.email` sudah disediakan.
+- Alur mengundang anggota dari aplikasi. Untuk sekarang login diatur lewat `npm run set-login`.
 - Form tambah tagihan berulang dan layar pengaturan batas budget harian.
 - Keputusan kategori Investasi di atas.

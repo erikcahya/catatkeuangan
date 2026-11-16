@@ -1,0 +1,32 @@
+# Deploy: app + postgres. Nginx (HTTPS) dipasang di depan port 3000.
+# Isi POSTGRES_PASSWORD di berkas .env di samping berkas ini.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: catatkeuangan
+      POSTGRES_USER: catatkeuangan
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?isi POSTGRES_PASSWORD di .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catatkeuangan"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://catatkeuangan:${POSTGRES_PASSWORD}@db:5432/catatkeuangan
+      NODE_ENV: production
+      PORT: 3000
+    ports:
+      - "127.0.0.1:3000:3000"
+
+volumes:
+  pgdata:
