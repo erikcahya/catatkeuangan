@@ -281,3 +281,74 @@ test('anak tidak bisa membuka tagihan', { skip }, async () => {
     [hashToken(token), anak.id]);
   assert.equal((await app.inject({ url: '/api/bills', cookies: { sid: token } })).statusCode, 403);
 });
+
+import { addDays } from '../src/lib/dates.js';
+
+test('tagihan tiap 28 hari dihitung dari pembayaran terakhir', { skip }, async () => {
+  const m = (await app.inject({ url: '/api/meta', cookies: { sid } })).json();
+  const today = m.today;
+  const get = async () => (await app.inject({ url: '/api/bills', cookies: { sid } })).json();
+  const pending = async (billId) => (await pool.query(
+    `select id, due_date from bill_occurrence where bill_id = $1 and status = 'pending' order by due_date`, [billId])).rows;
+
+  // Jadwal tidak lengkap ditolak.
+  const noAnchor = await app.inject({ method: 'POST', url: '/api/bills', cookies: { sid },
+    payload: { name: 'Wifi', category_id: cat['Tagihan'], account_id: acc['Rek. utama'], default_amount: 450000, interval_days: 28 } });
+  assert.equal(noAnchor.statusCode, 400);
+
+  // Terakhir beli 20 hari lalu -> jatuh tempo 8 hari lagi.
+  const r = await app.inject({ method: 'POST', url: '/api/bills', cookies: { sid },
+    payload: { name: 'Wifi', category_id: cat['Tagihan'], account_id: acc['Rek. utama'], default_amount: 450000,
+      interval_days: 28, anchor_date: addDays(today, -20) } });
+  assert.equal(r.statusCode, 201, r.body);
+  const wifiId = r.json().id;
+  assert.deepEqual((await pending(wifiId)).map((o) => o.due_date), [addDays(today, 8)]);
+
+  // Bayar hari ini (lebih awal) -> berikutnya hari ini + 28.
+  let occ = (await pending(wifiId))[0];
+  const pay = await app.inject({ method: 'POST', url: `/api/bills/occurrences/${occ.id}/pay`, cookies: { sid },
+    payload: { amount: 450000, trx_date: today, account_id: acc['Rek. utama'] } });
+  assert.equal(pay.statusCode, 201, pay.body);
+  assert.deepEqual((await pending(wifiId)).map((o) => o.due_date), [addDays(today, 28)]);
+  let bills = await get();
+  assert.equal(bills.bills.find((x) => x.id === wifiId).next_due, addDays(today, 28));
+
+  // Hapus pembayaran -> kembali ke jatuh tempo semula, yang berikutnya ditarik.
+  await app.inject({ method: 'DELETE', url: `/api/trx/${pay.json().trx_id}`, cookies: { sid } });
+  assert.deepEqual((await pending(wifiId)).map((o) => o.due_date), [addDays(today, 8)]);
+
+  // Lewati -> berikutnya dihitung dari jatuh tempo yang dilewati; batal lewati -> kembali.
+  occ = (await pending(wifiId))[0];
+  await app.inject({ method: 'POST', url: `/api/bills/occurrences/${occ.id}/skip`, cookies: { sid }, payload: { skipped: true } });
+  assert.deepEqual((await pending(wifiId)).map((o) => o.due_date), [addDays(today, 36)]);
+  await app.inject({ method: 'POST', url: `/api/bills/occurrences/${occ.id}/skip`, cookies: { sid }, payload: { skipped: false } });
+  assert.deepEqual((await pending(wifiId)).map((o) => o.due_date), [addDays(today, 8)]);
+
+  // Ganti jadwal: terakhir beli 40 hari lalu -> terlambat 12 hari, tetap tampil di siklus berjalan.
+  const put = await app.inject({ method: 'PUT', url: `/api/bills/${wifiId}`, cookies: { sid },
+    payload: { name: 'Wifi (Biznet)', category_id: cat['Tagihan'], account_id: acc['Rek. utama'], default_amount: 450000,
+      interval_days: 28, anchor_date: addDays(today, -40), remind_days_before: 3, is_active: true } });
+  assert.equal(put.statusCode, 200, put.body);
+  assert.deepEqual((await pending(wifiId)).map((o) => o.due_date), [addDays(today, -12)]);
+  bills = await get();
+  const late = bills.items.find((o) => o.bill_id === wifiId);
+  assert.equal(late.status, 'pending');
+  assert.equal(late.due_date, addDays(today, -12));
+
+  // Bayar terlambat: transaksi masuk siklus saat dibayar.
+  const latePay = await app.inject({ method: 'POST', url: `/api/bills/occurrences/${late.id}/pay`, cookies: { sid },
+    payload: { amount: 450000, trx_date: today, account_id: acc['Rek. utama'] } });
+  assert.equal(latePay.statusCode, 201);
+  const cyc = await pool.query(
+    'select pc.start_date from trx t join pay_cycle pc on pc.id = t.cycle_id where t.id = $1', [latePay.json().trx_id]);
+  assert.equal(cyc.rows[0].start_date, m.cycle.start);
+
+  // Ubah ke bulanan: jatuh tempo berinterval yang belum dibayar diganti tanggal tetap.
+  await app.inject({ method: 'PUT', url: `/api/bills/${wifiId}`, cookies: { sid },
+    payload: { name: 'Wifi (Biznet)', category_id: cat['Tagihan'], account_id: acc['Rek. utama'], default_amount: 450000,
+      due_dom: 10, remind_days_before: 3, is_active: true } });
+  const after = (await pool.query(
+    `select o.due_date, pc.start_date from bill_occurrence o join pay_cycle pc on pc.id = o.cycle_id
+      where o.bill_id = $1 and o.status = 'pending'`, [wifiId])).rows;
+  assert.ok(after.every((o) => o.start_date === m.cycle.start), JSON.stringify(after));
+});

@@ -65,3 +65,11 @@ test('billDueDate selalu jatuh di dalam siklusnya', () => {
     }
   }
 });
+
+import { addDays } from '../src/lib/dates.js';
+
+test('addDays melewati bulan dan tahun', () => {
+  assert.equal(addDays('2026-11-16', 28), '2026-12-14');
+  assert.equal(addDays('2026-12-20', 28), '2027-01-17');
+  assert.equal(addDays('2028-02-01', 28), '2028-02-29');
+});

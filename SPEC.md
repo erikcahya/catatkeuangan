@@ -41,7 +41,9 @@ Ditandai: **[pasti]** = disebut langsung oleh pemilik; **[asumsi]** = tafsiran s
 - **[terbuka]** Nominal dan tanggal jatuh tempo asli belum diketahui. Nilai di desain hanya contoh.
 - Tagihan siklus dibuat saat layar Tagihan atau Beranda dibuka untuk siklus berjalan atau lampau, bukan untuk siklus mendatang. Tagihan baru langsung muncul di siklus berjalan.
 - Tanggal jatuh tempo 25–31 jatuh di awal siklus, 1–24 di akhir siklus. Tanggal yang tidak ada di bulan itu (31 Nov) dimundurkan ke akhir bulan.
-- **[asumsi]** Transaksi pembayaran masuk siklus tagihannya, walau tanggal bayarnya sebelum siklus dimulai.
+- **[pasti]** Wifi jatuh tempo tiap 28 hari sejak pembelian terakhir, bukan tanggal tetap. Tagihan punya dua jenis jadwal: tanggal tetap tiap bulan (`due_dom`) atau tiap N hari (`interval_days`) sejak pembayaran terakhir. Untuk yang kedua, `anchor_date` = pembayaran terakhir sebelum dicatat di aplikasi; setelah itu dipakai tanggal transaksi pembayarannya (atau tanggal jatuh tempo yang dilewati). Selalu ada tepat satu jatuh tempo yang belum dibayar.
+- Siklus transaksi pembayaran = yang lebih akhir antara siklus tagihan dan siklus tanggal bayar: bayar lebih awal tetap masuk siklus tagihannya, bayar terlambat masuk siklus saat dibayar.
+- Tagihan yang belum dibayar dari siklus sebelumnya tetap tampil (dan dihitung) di siklus berjalan sebagai terlambat.
 - Mengubah tagihan memperbarui tagihan siklus berjalan yang belum dibayar. Menonaktifkan menghapusnya dari siklus berjalan; riwayat tetap ada.
 - Tagihan bisa dilewati untuk satu siklus (`status = skipped`), mis. pembantu libur. Menghapus transaksi pembayaran mengembalikan tagihan ke belum dibayar.
 - **[asumsi]** Layar Tagihan hanya untuk anggota yang boleh melihat laporan.

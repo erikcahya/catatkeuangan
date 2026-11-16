@@ -287,3 +287,11 @@ dialog.sheet::backdrop { background: rgba(15, 30, 26, .45); }
   display: flex; flex-direction: column; gap: 14px;
 }
 .sheet-actions { display: flex; justify-content: space-between; }
+
+/* Pilihan jadwal tagihan */
+.segmented.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.inline-num { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; }
+.inline-num input {
+  width: 64px; padding: 6px 8px; text-align: right; font-weight: 500;
+  border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface);
+}

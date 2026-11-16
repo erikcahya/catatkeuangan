@@ -91,3 +91,8 @@ export function billDueDate(start, dueDom, payday = 25) {
   const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
   return ymd(y, m, Math.min(dueDom, lastDay));
 }
+
+/** Tanggal s ditambah n hari. */
+export function addDays(s, n) {
+  return fmt(new Date(parse(s).getTime() + n * DAY_MS));
+}

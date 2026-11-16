@@ -60,7 +60,7 @@ export default async function summaryRoutes(app) {
       (status === 'future'
         ? Promise.resolve()
         : ensureBillOccurrences(pool, u.household_id, start, u.payday_dom))
-        .then(() => billCycleSummary(pool, u.household_id, start)),
+        .then(() => billCycleSummary(pool, u.household_id, start, status === 'current')),
       pool.query(
         `select coalesce(sum(t.amount), 0) as deposited
            from trx t

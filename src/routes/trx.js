@@ -1,7 +1,7 @@
 import { withTx } from '../db.js';
 import { HttpError } from '../lib/errors.js';
 import { dailyBudgets } from '../lib/budget.js';
-import { ensureCycle } from '../lib/cycles.js';
+import { ensureCycle, retractIntervalAfter } from '../lib/cycles.js';
 import { cycleLabel, cycleStart, isValidDate, salaryCycleStart } from '../lib/dates.js';
 
 const SALARY_CATEGORY = 'Gaji';
@@ -165,10 +165,12 @@ export default async function trxRoutes(app) {
       if (t.repays > 0) throw new HttpError(409, 'Transaksi ini adalah pelunasan utang darurat. Batalkan dari layar Rekening darurat.');
 
       if (t.debt_id) await c.query('delete from emergency_debt where id = $1', [t.debt_id]);
-      await c.query(
-        `update bill_occurrence set status = 'pending', transaction_id = null where transaction_id = $1`,
+      const reset = await c.query(
+        `update bill_occurrence set status = 'pending', transaction_id = null where transaction_id = $1 returning id`,
         [t.id],
       );
+      // Tagihan berinterval: jatuh tempo berikutnya yang dihitung dari pembayaran ini ikut ditarik.
+      for (const r of reset.rows) await retractIntervalAfter(c, r.id);
       await c.query(
         'update trx set deleted_at = now(), updated_at = now(), updated_by = $2 where id = $1',
         [t.id, u.id],

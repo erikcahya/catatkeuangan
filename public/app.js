@@ -517,7 +517,9 @@ async function renderBills() {
           <a class="trx-item link-row" href="#/tagihan/${esc(x.id)}">
             <div class="main">
               <span class="name">${esc(x.name)}</span>
-              <span class="tile-label">Tiap tanggal ${x.due_dom} · ${esc(x.account_name)}${x.is_active ? '' : ' · nonaktif'}</span>
+              <span class="tile-label">${x.interval_days
+                ? `Tiap ${x.interval_days} hari${x.next_due && x.is_active ? ` · berikutnya ${tanggalPendek(x.next_due)}` : ''}`
+                : `Tiap tanggal ${x.due_dom}`} · ${esc(x.account_name)}${x.is_active ? '' : ' · nonaktif'}</span>
             </div>
             <span class="amt${x.is_active ? '' : ' muted'}">${x.is_variable ? '± ' : ''}${rupiah(x.default_amount)}</span>
           </a></li>`).join('')}</ul>` : ''}
@@ -604,6 +606,7 @@ async function renderBillForm(id) {
   const accounts = m.accounts.filter((a) => a.kind !== 'asset');
   const v = bill ?? {
     name: '', default_amount: 0, is_variable: false, due_dom: 1, remind_days_before: 3, is_active: true,
+    interval_days: null, anchor_date: null,
     category_id: (cats.find((c) => c.counts_as_bill) ?? cats[0])?.id,
     account_id: accounts.find((a) => !a.is_emergency)?.id,
   };
@@ -618,18 +621,32 @@ async function renderBillForm(id) {
         <input id="b-name" maxlength="80" autocomplete="off" placeholder="Contoh: Wifi (Biznet)" value="${esc(v.name)}">
       </div>
       <div class="card field amount">
-        <label for="b-amount">Nominal tiap bulan</label>
+        <label for="b-amount">Nominal tiap bayar</label>
         <input id="b-amount" inputmode="numeric" autocomplete="off" placeholder="Rp 0" value="${v.default_amount ? rupiah(v.default_amount) : ''}">
       </div>
       <div class="card rows">
         <label class="row toggle">
-          <span class="text"><span>Nominal berubah tiap bulan</span>
+          <span class="text"><span>Nominal berubah-ubah</span>
             <span class="tile-label">Mis. listrik. Nominal di atas jadi perkiraan.</span></span>
           <input type="checkbox" id="b-variable"${v.is_variable ? ' checked' : ''}>
         </label>
-        <div class="row">
+      </div>
+      <div class="segmented two" role="group" aria-label="Jadwal tagihan">
+        <button type="button" data-sched="monthly" aria-pressed="${!v.interval_days}">Tanggal tetap</button>
+        <button type="button" data-sched="interval" aria-pressed="${!!v.interval_days}">Tiap N hari</button>
+      </div>
+      <div class="card rows">
+        <div class="row" id="row-monthly">
           <label for="b-due">Jatuh tempo</label>
-          <select id="b-due">${Array.from({ length: 31 }, (_, i) => opt(String(i + 1), `Tanggal ${i + 1}`, String(v.due_dom))).join('')}</select>
+          <select id="b-due">${Array.from({ length: 31 }, (_, i) => opt(String(i + 1), `Tanggal ${i + 1}`, String(v.due_dom ?? 1))).join('')}</select>
+        </div>
+        <div class="row" id="row-interval">
+          <label for="b-interval">Tiap</label>
+          <span class="inline-num"><input id="b-interval" type="number" inputmode="numeric" min="7" max="366" value="${v.interval_days ?? 28}"> hari</span>
+        </div>
+        <div class="row" id="row-anchor">
+          <label for="b-anchor">Terakhir dibayar</label>
+          <input id="b-anchor" type="date" value="${esc(v.anchor_date ?? m.today)}">
         </div>
         <div class="row">
           <label for="b-remind">Ingatkan</label>
@@ -649,7 +666,8 @@ async function renderBillForm(id) {
           <input type="checkbox" id="b-active"${v.is_active ? ' checked' : ''}>
         </label>` : ''}
       </div>
-      <p class="tile-label">Siklus berjalan 25 sampai 24. Tanggal 25–31 jatuh di awal siklus, tanggal 1–24 di akhir siklus.</p>
+      <p class="tile-label" id="hint-monthly">Siklus berjalan 25 sampai 24. Tanggal 25–31 jatuh di awal siklus, tanggal 1–24 di akhir siklus.</p>
+      <p class="tile-label" id="hint-interval">Jatuh tempo berikutnya dihitung dari tanggal bayar terakhir, mis. wifi tiap 28 hari sejak terakhir beli. ${bill?.interval_days ? 'Setelah tagihan dibayar lewat aplikasi, tanggal bayar itu yang dipakai.' : ''}</p>
     </div>
     <div class="footer"><button class="btn-primary" type="submit">${bill ? 'Simpan perubahan' : 'Simpan tagihan'}</button></div>
   </form>`;
@@ -660,6 +678,17 @@ async function renderBillForm(id) {
   amt.addEventListener('input', () => { const n = parseRupiah(amt.value); amt.value = n ? rupiah(n) : ''; });
   if (!bill) f.querySelector('#b-name').focus();
 
+  let sched = v.interval_days ? 'interval' : 'monthly';
+  const syncSched = () => {
+    f.querySelectorAll('[data-sched]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.sched === sched)));
+    for (const [id, on] of [['row-monthly', sched === 'monthly'], ['hint-monthly', sched === 'monthly'],
+      ['row-interval', sched === 'interval'], ['row-anchor', sched === 'interval'], ['hint-interval', sched === 'interval']]) {
+      document.getElementById(id).hidden = !on;
+    }
+  };
+  f.querySelectorAll('[data-sched]').forEach((x) => x.addEventListener('click', () => { sched = x.dataset.sched; syncSched(); }));
+  syncSched();
+
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fail = (msg, el) => { err.textContent = msg; err.hidden = false; el?.focus(); };
@@ -669,13 +698,19 @@ async function renderBillForm(id) {
       name,
       default_amount: parseRupiah(amt.value),
       is_variable: f.querySelector('#b-variable').checked,
-      due_dom: Number(f.querySelector('#b-due').value),
+      due_dom: sched === 'monthly' ? Number(f.querySelector('#b-due').value) : null,
+      interval_days: sched === 'interval' ? Number(f.querySelector('#b-interval').value) : null,
+      anchor_date: sched === 'interval' ? f.querySelector('#b-anchor').value || null : null,
       remind_days_before: Number(f.querySelector('#b-remind').value),
       category_id: f.querySelector('#b-cat').value,
       account_id: f.querySelector('#b-acc').value,
       is_active: bill ? f.querySelector('#b-active').checked : true,
     };
     if (!body.default_amount && !body.is_variable) return fail('Isi nominalnya.', amt);
+    if (sched === 'interval') {
+      if (!(body.interval_days >= 7 && body.interval_days <= 366)) return fail('Jarak tagihan 7 sampai 366 hari.', f.querySelector('#b-interval'));
+      if (!body.anchor_date) return fail('Isi tanggal terakhir dibayar.', f.querySelector('#b-anchor'));
+    }
     const btn = f.querySelector('[type="submit"]');
     btn.disabled = true;
     try {
