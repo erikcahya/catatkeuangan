@@ -1,5 +1,7 @@
 import { HttpError } from '../lib/errors.js';
 import { dailyBudgets } from '../lib/budget.js';
+import { ensureBillOccurrences } from '../lib/cycles.js';
+import { billCycleSummary } from './bills.js';
 import { cycleEnd, cycleLabel, cycleStart, daysBetween, isValidDate, todayJakarta } from '../lib/dates.js';
 
 /**
@@ -55,16 +57,10 @@ export default async function summaryRoutes(app) {
            from account a where a.household_id = $1 and a.is_emergency`,
         [u.household_id],
       ),
-      pool.query(
-        `select count(*)::int as count,
-                coalesce(sum(o.expected_amount), 0) as total,
-                (count(*) filter (where o.status = 'pending'))::int as unpaid_count,
-                coalesce(sum(o.expected_amount) filter (where o.status = 'pending'), 0) as unpaid_amount
-           from bill_occurrence o
-           join pay_cycle pc on pc.id = o.cycle_id
-          where pc.household_id = $1 and pc.start_date = $2 and o.status <> 'skipped'`,
-        [u.household_id, start],
-      ),
+      (status === 'future'
+        ? Promise.resolve()
+        : ensureBillOccurrences(pool, u.household_id, start, u.payday_dom))
+        .then(() => billCycleSummary(pool, u.household_id, start)),
       pool.query(
         `select coalesce(sum(t.amount), 0) as deposited
            from trx t
@@ -97,7 +93,7 @@ export default async function summaryRoutes(app) {
       emergency: em
         ? { name: em.name, target: em.target, open_debt: em.open_debt, filled: Math.max(0, (em.target ?? 0) - em.open_debt) }
         : null,
-      bills: bills.rows[0],
+      bills,
       savings: savings.rows[0],
       restricted: false,
     };

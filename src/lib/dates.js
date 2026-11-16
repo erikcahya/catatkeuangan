@@ -77,3 +77,17 @@ export function daysBetween(a, b) {
 export function isValidDate(s) {
   try { parse(s); return true; } catch { return false; }
 }
+
+/**
+ * Tanggal jatuh tempo tagihan di dalam siklus yang mulai pada `start`.
+ * Tanggal >= gajian jatuh di bulan awal siklus, sisanya di bulan berikutnya.
+ * Tanggal yang tidak ada di bulan itu (mis. 31 Nov) dimundurkan ke akhir bulan.
+ * Contoh (payday 25, siklus 25 Nov–24 Des): due 22 -> 22 Des, due 28 -> 28 Nov, due 31 -> 30 Nov.
+ */
+export function billDueDate(start, dueDom, payday = 25) {
+  const s = parse(start);
+  const y = s.getUTCFullYear();
+  const m = dueDom >= payday ? s.getUTCMonth() : s.getUTCMonth() + 1;
+  const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  return ymd(y, m, Math.min(dueDom, lastDay));
+}

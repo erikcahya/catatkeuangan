@@ -1,32 +1,14 @@
 import { withTx } from '../db.js';
 import { HttpError } from '../lib/errors.js';
 import { dailyBudgets } from '../lib/budget.js';
-import {
-  cycleEnd, cycleLabel, cycleStart, isValidDate, salaryCycleStart,
-} from '../lib/dates.js';
+import { ensureCycle } from '../lib/cycles.js';
+import { cycleLabel, cycleStart, isValidDate, salaryCycleStart } from '../lib/dates.js';
 
 const SALARY_CATEGORY = 'Gaji';
 const uuid = { type: 'string', format: 'uuid' };
 const nullableUuid = { anyOf: [uuid, { type: 'null' }] };
 
-/** Ambil id pay_cycle untuk tanggal awal itu; buat bila belum ada. */
-async function ensureCycle(c, householdId, start) {
-  const ins = await c.query(
-    `insert into pay_cycle (household_id, start_date, end_date, label)
-     values ($1, $2, $3, $4)
-     on conflict (household_id, start_date) do nothing
-     returning id`,
-    [householdId, start, cycleEnd(start), cycleLabel(start)],
-  );
-  if (ins.rows.length) return ins.rows[0].id;
-  const sel = await c.query(
-    'select id from pay_cycle where household_id = $1 and start_date = $2',
-    [householdId, start],
-  );
-  return sel.rows[0].id;
-}
-
-const LIST_SQL = `
+export const LIST_SQL = `
   select t.id, t.kind, t.amount, t.trx_date, t.note, t.is_one_off, t.created_at, t.updated_at,
          a.name  as account_name,
          ta.name as to_account_name,

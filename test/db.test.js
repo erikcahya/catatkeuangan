@@ -17,7 +17,7 @@ let pool, app, sid, erik, acc, cat;
 before(async () => {
   if (skip) return;
   pool = createPool(url);
-  await pool.query(`truncate emergency_debt, bill_occurrence, budget, trx, pay_cycle, session restart identity cascade`);
+  await pool.query(`truncate emergency_debt, bill_occurrence, recurring_bill, budget, trx, pay_cycle, session restart identity cascade`);
   erik = (await pool.query(`select * from app_user where name = 'Erik'`)).rows[0];
   acc = Object.fromEntries((await pool.query('select name, id from account')).rows.map((r) => [r.name, r.id]));
   cat = Object.fromEntries((await pool.query('select name, id from category')).rows.map((r) => [r.name, r.id]));
@@ -198,4 +198,86 @@ test('anak tidak mendapat angka laporan, saldo, darurat, tabungan', { skip }, as
   assert.equal(s.restricted, true);
   for (const k of ['totals', 'emergency', 'savings', 'bills', 'cycles']) assert.equal(s[k], undefined, k);
   assert.ok(Array.isArray(s.daily_budgets));
+});
+
+test('tagihan berulang: tambah, muncul di siklus berjalan, bayar, hapus bayaran, lewati', { skip }, async () => {
+  const today = (await app.inject({ url: '/api/meta', cookies: { sid } })).json();
+  const current = today.cycle.start;
+  const mk = (payload) => app.inject({ method: 'POST', url: '/api/bills', cookies: { sid }, payload });
+
+  const kontrakan = await mk({ name: 'Kontrakan', category_id: cat['Tagihan'], account_id: acc['Rek. utama'],
+    default_amount: 3500000, due_dom: 22 });
+  assert.equal(kontrakan.statusCode, 201, kontrakan.body);
+  const listrik = await mk({ name: 'Listrik', category_id: cat['Tagihan'], account_id: acc['Rek. utama'],
+    default_amount: 500000, is_variable: true, due_dom: 15 });
+  assert.equal(listrik.statusCode, 201);
+  const salah = await mk({ name: 'X', category_id: cat['Gaji'], account_id: acc['Rek. utama'], default_amount: 1, due_dom: 1 });
+  assert.equal(salah.statusCode, 400);
+
+  const get = async () => (await app.inject({ url: '/api/bills', cookies: { sid } })).json();
+  let b = await get();
+  assert.equal(b.cycle.start, current);
+  assert.equal(b.items.length, 2);
+  assert.ok(b.items.every((o) => o.status === 'pending' && o.due_date >= current && o.due_date <= b.cycle.end));
+  assert.deepEqual(b.summary, { count: 2, paid_count: 0, unpaid_count: 2, total: 4000000, unpaid_amount: 4000000 });
+
+  // Dipanggil ulang tidak menggandakan.
+  b = await get();
+  assert.equal(b.items.length, 2);
+
+  // Bayar listrik dengan nominal sebenarnya.
+  const occ = b.items.find((o) => o.name === 'Listrik');
+  const pay = await app.inject({ method: 'POST', url: `/api/bills/occurrences/${occ.id}/pay`, cookies: { sid },
+    payload: { amount: 520000, trx_date: today.today, account_id: acc['Rek. utama'] } });
+  assert.equal(pay.statusCode, 201, pay.body);
+  const twice = await app.inject({ method: 'POST', url: `/api/bills/occurrences/${occ.id}/pay`, cookies: { sid },
+    payload: { amount: 520000, trx_date: today.today, account_id: acc['Rek. utama'] } });
+  assert.equal(twice.statusCode, 409);
+
+  b = await get();
+  assert.deepEqual(b.summary, { count: 2, paid_count: 1, unpaid_count: 1, total: 4020000, unpaid_amount: 3500000 });
+  const paidTrx = await pool.query('select kind, category_id, note, cycle_id from trx where id = $1', [pay.json().trx_id]);
+  assert.equal(paidTrx.rows[0].note, 'Listrik');
+  assert.equal(paidTrx.rows[0].category_id, cat['Tagihan']);
+
+  // Beranda ikut.
+  const s = (await app.inject({ url: '/api/summary', cookies: { sid } })).json();
+  assert.equal(s.bills.unpaid_count, 1);
+
+  // Hapus transaksinya -> tagihan kembali belum dibayar.
+  await app.inject({ method: 'DELETE', url: `/api/trx/${pay.json().trx_id}`, cookies: { sid } });
+  b = await get();
+  assert.equal(b.items.find((o) => o.name === 'Listrik').status, 'pending');
+
+  // Lewati kontrakan -> tidak dihitung.
+  const k = b.items.find((o) => o.name === 'Kontrakan');
+  await app.inject({ method: 'POST', url: `/api/bills/occurrences/${k.id}/skip`, cookies: { sid }, payload: { skipped: true } });
+  b = await get();
+  assert.equal(b.summary.count, 1);
+  assert.equal(b.summary.unpaid_amount, 500000);
+
+  // Ubah nominal listrik -> tagihan siklus berjalan yang belum dibayar ikut berubah.
+  const bill = b.bills.find((x) => x.name === 'Listrik');
+  const put = await app.inject({ method: 'PUT', url: `/api/bills/${bill.id}`, cookies: { sid },
+    payload: { name: 'Listrik PLN', category_id: cat['Tagihan'], account_id: acc['Rek. utama'],
+      default_amount: 600000, is_variable: true, due_dom: 15, remind_days_before: 3, is_active: true } });
+  assert.equal(put.statusCode, 200, put.body);
+  b = await get();
+  assert.equal(b.items.find((o) => o.bill_id === bill.id).expected_amount, 600000);
+
+  // Nonaktifkan -> hilang dari siklus berjalan.
+  await app.inject({ method: 'PUT', url: `/api/bills/${bill.id}`, cookies: { sid },
+    payload: { name: 'Listrik PLN', category_id: cat['Tagihan'], account_id: acc['Rek. utama'],
+      default_amount: 600000, is_variable: true, due_dom: 15, remind_days_before: 3, is_active: false } });
+  b = await get();
+  assert.ok(!b.items.some((o) => o.bill_id === bill.id));
+  assert.equal(b.bills.find((x) => x.id === bill.id).is_active, false);
+});
+
+test('anak tidak bisa membuka tagihan', { skip }, async () => {
+  const anak = (await pool.query(`select id from app_user where role = 'anak'`)).rows[0];
+  const token = newSessionToken();
+  await pool.query(`insert into session (token_hash, user_id, expires_at) values ($1, $2, now() + interval '1 day')`,
+    [hashToken(token), anak.id]);
+  assert.equal((await app.inject({ url: '/api/bills', cookies: { sid: token } })).statusCode, 403);
 });

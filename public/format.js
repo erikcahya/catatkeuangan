@@ -26,3 +26,15 @@ export function esc(s) {
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   })[ch]);
 }
+
+/** "2026-12-22" -> "22 Des" */
+export function tanggalPendek(s) {
+  const [, m, d] = s.split('-').map(Number);
+  return `${d} ${BULAN[m - 1]}`;
+}
+
+/** Selisih hari b - a untuk tanggal 'YYYY-MM-DD'. */
+export function selisihHari(a, b) {
+  const t = (s) => Date.UTC(...s.split('-').map((n, i) => Number(n) - (i === 1 ? 1 : 0)));
+  return Math.round((t(b) - t(a)) / 86_400_000);
+}

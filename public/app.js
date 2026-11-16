@@ -1,4 +1,4 @@
-import { rupiah, parseRupiah, tanggal, esc } from './format.js';
+import { rupiah, parseRupiah, tanggal, tanggalPendek, selisihHari, esc } from './format.js';
 
 const app = document.getElementById('app');
 const toastEl = document.getElementById('toast');
@@ -10,6 +10,7 @@ const ICON = {
   trash: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>',
   chevron: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>',
   warn: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.5v.01"/></svg>',
+  back: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>',
 };
 
 // ---------- API ----------
@@ -182,11 +183,11 @@ function billsAndSavings(s) {
   const billNote = b.count === 0 ? 'Belum diatur'
     : b.unpaid_count > 0 ? `${b.unpaid_count} belum dibayar` : 'Semua lunas';
   return `<div class="tiles">
-    <div class="tile">
+    <a class="tile" href="#/tagihan">
       <span class="tile-label">Tagihan berulang</span>
       <span class="tile-value small">${rupiah(b.total)}</span>
       <span class="${b.unpaid_count > 0 ? 'warn-text' : 'tile-label'} tiny">${billNote}</span>
-    </div>
+    </a>
     <div class="tile">
       <span class="tile-label">Tabungan dan investasi</span>
       <span class="tile-value small">${rupiah(s.savings.deposited)}</span>
@@ -443,12 +444,272 @@ async function renderAdd() {
   });
 }
 
+// ---------- Layar 3: tagihan berulang ----------
+
+function billDue(o, today) {
+  if (o.status === 'paid') return { text: `Dibayar ${tanggalPendek(o.paid_date)}`, cls: 'tile-label' };
+  if (o.status === 'skipped') return { text: 'Dilewati siklus ini', cls: 'tile-label' };
+  const d = selisihHari(today, o.due_date);
+  const tgl = tanggalPendek(o.due_date);
+  if (d < 0) return { text: `Lewat ${-d} hari · jatuh tempo ${tgl}`, cls: 'danger-text' };
+  if (d === 0) return { text: 'Jatuh tempo hari ini', cls: 'warn-text tiny' };
+  if (d <= o.remind_days_before) return { text: `Jatuh tempo ${tgl} · ${d} hari lagi`, cls: 'warn-text tiny' };
+  return { text: `Jatuh tempo ${tgl}`, cls: 'tile-label' };
+}
+
+function backHeader(eyebrow, title, href = '#/') {
+  return `<div class="topbar start">
+    <a class="icon-btn" href="${href}" aria-label="Kembali">${ICON.back}</a>
+    <div><div class="eyebrow">${esc(eyebrow)}</div><h1 class="title">${esc(title)}</h1></div>
+  </div>`;
+}
+
+async function renderBills() {
+  const m = await loadMeta();
+  if (!m.user.can_view_reports) { location.hash = '#/'; return; }
+  const b = await api(`/api/bills${selectedCycle ? `?cycle=${selectedCycle}` : ''}`);
+  const pending = b.items.filter((o) => o.status === 'pending');
+  const paid = b.items.filter((o) => o.status === 'paid');
+  const skipped = b.items.filter((o) => o.status === 'skipped');
+  const s = b.summary;
+
+  const row = (o, right) => {
+    const due = billDue(o, b.today);
+    return `<li class="trx-item">
+      <div class="main">
+        <span class="name">${esc(o.name)}</span>
+        <span class="${due.cls}">${esc(due.text)}${o.is_variable && o.status !== 'skipped' ? ' · nominal berubah' : ''}</span>
+      </div>
+      <div class="right">${right}</div>
+    </li>`;
+  };
+
+  const summaryCard = s.count === 0 ? '' : `<section class="card bill-summary">
+      <span class="eyebrow">Belum dibayar siklus ini</span>
+      <span class="big-amount">${rupiah(s.unpaid_amount)}</span>
+      <div class="em-track neutral"><div style="width:${pct(s.paid_count, s.count)}%"></div></div>
+      <span class="tile-label">${s.paid_count} dari ${s.count} tagihan sudah lunas · total ${rupiah(s.total)}</span>
+    </section>`;
+
+  const emptyText = b.bills.length === 0
+    ? 'Belum ada tagihan berulang. Tambahkan wifi, pembantu, kontrakan, listrik, dan lainnya.'
+    : b.cycle.status === 'future'
+      ? 'Tagihan siklus ini dibuat saat siklusnya dimulai.'
+      : 'Tidak ada tagihan aktif di siklus ini.';
+
+  app.innerHTML = `<div class="screen">
+    <div class="screen-body">
+      ${backHeader(`Siklus ${b.cycle.label}`, 'Tagihan berulang')}
+      ${summaryCard}
+      ${b.items.length === 0 ? `<p class="empty">${emptyText}</p>` : ''}
+      ${pending.length ? `<div class="section-head"><h2>Belum dibayar</h2></div>
+        <ul class="trx-list">${pending.map((o) => row(o, `
+          <span class="amt strong">${rupiah(o.expected_amount)}</span>
+          <button type="button" class="btn-pill" data-pay="${esc(o.id)}">Bayar</button>`)).join('')}</ul>` : ''}
+      ${paid.length ? `<div class="section-head"><h2>Sudah dibayar</h2></div>
+        <ul class="trx-list">${paid.map((o) => row(o, `<span class="amt in">${rupiah(o.paid_amount)}</span>`)).join('')}</ul>` : ''}
+      ${skipped.length ? `<div class="section-head"><h2>Dilewati</h2></div>
+        <ul class="trx-list">${skipped.map((o) => row(o, `
+          <span class="amt muted">${rupiah(o.expected_amount)}</span>
+          <button type="button" class="btn-pill outline" data-unskip="${esc(o.id)}">Batalkan</button>`)).join('')}</ul>` : ''}
+      ${b.bills.length ? `<div class="section-head"><h2>Semua tagihan</h2></div>
+        <ul class="trx-list">${b.bills.map((x) => `<li>
+          <a class="trx-item link-row" href="#/tagihan/${esc(x.id)}">
+            <div class="main">
+              <span class="name">${esc(x.name)}</span>
+              <span class="tile-label">Tiap tanggal ${x.due_dom} · ${esc(x.account_name)}${x.is_active ? '' : ' · nonaktif'}</span>
+            </div>
+            <span class="amt${x.is_active ? '' : ' muted'}">${x.is_variable ? '± ' : ''}${rupiah(x.default_amount)}</span>
+          </a></li>`).join('')}</ul>` : ''}
+    </div>
+    <div class="footer"><a class="btn-outline" href="#/tagihan/baru">Tambah tagihan berulang</a></div>
+  </div>
+  <dialog id="pay-dialog" class="sheet" aria-labelledby="pay-title"></dialog>`;
+
+  const dlg = document.getElementById('pay-dialog');
+  const payable = m.accounts.filter((a) => a.kind !== 'asset');
+
+  app.querySelectorAll('[data-pay]').forEach((btn) => btn.addEventListener('click', () => {
+    const o = b.items.find((x) => x.id === btn.dataset.pay);
+    dlg.innerHTML = `<form class="sheet-body" id="pay-form" novalidate>
+      <h2 id="pay-title" class="title">Bayar ${esc(o.name)}</h2>
+      <div id="pay-err" class="error" hidden></div>
+      <div class="card field amount">
+        <label for="pay-amount">Jumlah${o.is_variable ? ' (sesuaikan dengan tagihan bulan ini)' : ''}</label>
+        <input id="pay-amount" inputmode="numeric" autocomplete="off" value="${rupiah(o.expected_amount)}">
+      </div>
+      <div class="card rows">
+        <div class="row"><label for="pay-date">Tanggal</label>
+          <input id="pay-date" type="date" value="${esc(b.today)}"></div>
+        <div class="row"><label for="pay-account">Dari rekening</label>
+          <select id="pay-account">${payable.map((a) => `<option value="${esc(a.id)}"${a.id === o.account_id ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select></div>
+      </div>
+      <button class="btn-primary" type="submit">Bayar ${esc(o.name)}</button>
+      <div class="sheet-actions">
+        <button type="button" class="btn-text" id="pay-skip">Lewati siklus ini</button>
+        <button type="button" class="btn-text" id="pay-cancel">Batal</button>
+      </div>
+    </form>`;
+    const f = dlg.querySelector('form');
+    const amt = f.querySelector('#pay-amount');
+    const err = f.querySelector('#pay-err');
+    amt.addEventListener('input', () => { const n = parseRupiah(amt.value); amt.value = n ? rupiah(n) : ''; });
+    f.querySelector('#pay-cancel').addEventListener('click', () => dlg.close());
+    f.querySelector('#pay-skip').addEventListener('click', async () => {
+      await api(`/api/bills/occurrences/${o.id}/skip`, { method: 'POST', body: { skipped: true } });
+      dlg.close();
+      toast(`${o.name} dilewati untuk siklus ini.`);
+      renderBills();
+    });
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const amount = parseRupiah(amt.value);
+      if (!amount) { err.textContent = 'Isi jumlahnya.'; err.hidden = false; amt.focus(); return; }
+      const submit = f.querySelector('[type="submit"]');
+      submit.disabled = true;
+      try {
+        await api(`/api/bills/occurrences/${o.id}/pay`, {
+          method: 'POST',
+          body: { amount, trx_date: f.querySelector('#pay-date').value, account_id: f.querySelector('#pay-account').value },
+        });
+        dlg.close();
+        toast(`${o.name} dibayar ${rupiah(amount)}.`);
+        renderBills();
+      } catch (ex) {
+        submit.disabled = false;
+        err.textContent = ex.message;
+        err.hidden = false;
+      }
+    });
+    dlg.showModal();
+    amt.focus();
+    amt.select();
+  }));
+
+  app.querySelectorAll('[data-unskip]').forEach((btn) => btn.addEventListener('click', async () => {
+    await api(`/api/bills/occurrences/${btn.dataset.unskip}/skip`, { method: 'POST', body: { skipped: false } });
+    renderBills();
+  }));
+}
+
+async function renderBillForm(id) {
+  const m = await loadMeta();
+  if (!m.user.can_view_reports) { location.hash = '#/'; return; }
+  let bill = null;
+  if (id) {
+    bill = (await api('/api/bills')).bills.find((x) => x.id === id);
+    if (!bill) throw new Error('Tagihan tidak ditemukan.');
+  }
+  const cats = m.categories.filter((c) => c.kind === 'expense');
+  const accounts = m.accounts.filter((a) => a.kind !== 'asset');
+  const v = bill ?? {
+    name: '', default_amount: 0, is_variable: false, due_dom: 1, remind_days_before: 3, is_active: true,
+    category_id: (cats.find((c) => c.counts_as_bill) ?? cats[0])?.id,
+    account_id: accounts.find((a) => !a.is_emergency)?.id,
+  };
+  const opt = (value, label, sel) => `<option value="${esc(value)}"${value === sel ? ' selected' : ''}>${esc(label)}</option>`;
+
+  app.innerHTML = `<form class="screen" id="bill-form" novalidate>
+    <div class="screen-body">
+      ${backHeader('Tagihan berulang', bill ? 'Ubah tagihan' : 'Tambah tagihan', '#/tagihan')}
+      <div id="bill-err" class="error" hidden></div>
+      <div class="card field">
+        <label for="b-name">Nama</label>
+        <input id="b-name" maxlength="80" autocomplete="off" placeholder="Contoh: Wifi (Biznet)" value="${esc(v.name)}">
+      </div>
+      <div class="card field amount">
+        <label for="b-amount">Nominal tiap bulan</label>
+        <input id="b-amount" inputmode="numeric" autocomplete="off" placeholder="Rp 0" value="${v.default_amount ? rupiah(v.default_amount) : ''}">
+      </div>
+      <div class="card rows">
+        <label class="row toggle">
+          <span class="text"><span>Nominal berubah tiap bulan</span>
+            <span class="tile-label">Mis. listrik. Nominal di atas jadi perkiraan.</span></span>
+          <input type="checkbox" id="b-variable"${v.is_variable ? ' checked' : ''}>
+        </label>
+        <div class="row">
+          <label for="b-due">Jatuh tempo</label>
+          <select id="b-due">${Array.from({ length: 31 }, (_, i) => opt(String(i + 1), `Tanggal ${i + 1}`, String(v.due_dom))).join('')}</select>
+        </div>
+        <div class="row">
+          <label for="b-remind">Ingatkan</label>
+          <select id="b-remind">${[0, 1, 2, 3, 5, 7].map((n) => opt(String(n), n ? `${n} hari sebelumnya` : 'Pada harinya', String(v.remind_days_before))).join('')}</select>
+        </div>
+        <div class="row">
+          <label for="b-cat">Kategori</label>
+          <select id="b-cat">${cats.map((c) => opt(c.id, c.name, v.category_id)).join('')}</select>
+        </div>
+        <div class="row">
+          <label for="b-acc">Dibayar dari</label>
+          <select id="b-acc">${accounts.map((a) => opt(a.id, a.name, v.account_id)).join('')}</select>
+        </div>
+        ${bill ? `<label class="row toggle">
+          <span class="text"><span>Aktif</span>
+            <span class="tile-label">Matikan bila tagihan sudah berhenti. Riwayat tetap tersimpan.</span></span>
+          <input type="checkbox" id="b-active"${v.is_active ? ' checked' : ''}>
+        </label>` : ''}
+      </div>
+      <p class="tile-label">Siklus berjalan 25 sampai 24. Tanggal 25–31 jatuh di awal siklus, tanggal 1–24 di akhir siklus.</p>
+    </div>
+    <div class="footer"><button class="btn-primary" type="submit">${bill ? 'Simpan perubahan' : 'Simpan tagihan'}</button></div>
+  </form>`;
+
+  const f = document.getElementById('bill-form');
+  const err = document.getElementById('bill-err');
+  const amt = f.querySelector('#b-amount');
+  amt.addEventListener('input', () => { const n = parseRupiah(amt.value); amt.value = n ? rupiah(n) : ''; });
+  if (!bill) f.querySelector('#b-name').focus();
+
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fail = (msg, el) => { err.textContent = msg; err.hidden = false; el?.focus(); };
+    const name = f.querySelector('#b-name').value.trim();
+    if (!name) return fail('Isi nama tagihan.', f.querySelector('#b-name'));
+    const body = {
+      name,
+      default_amount: parseRupiah(amt.value),
+      is_variable: f.querySelector('#b-variable').checked,
+      due_dom: Number(f.querySelector('#b-due').value),
+      remind_days_before: Number(f.querySelector('#b-remind').value),
+      category_id: f.querySelector('#b-cat').value,
+      account_id: f.querySelector('#b-acc').value,
+      is_active: bill ? f.querySelector('#b-active').checked : true,
+    };
+    if (!body.default_amount && !body.is_variable) return fail('Isi nominalnya.', amt);
+    const btn = f.querySelector('[type="submit"]');
+    btn.disabled = true;
+    try {
+      await api(bill ? `/api/bills/${bill.id}` : '/api/bills', { method: bill ? 'PUT' : 'POST', body });
+      toast(bill ? 'Tagihan diperbarui.' : 'Tagihan ditambahkan.');
+      location.hash = '#/tagihan';
+    } catch (ex) {
+      btn.disabled = false;
+      fail(ex.message);
+    }
+  });
+}
+
 // ---------- Router ----------
 
-const routes = { '#/': renderHome, '#/tambah': renderAdd, '#/login': renderLogin };
+const routes = [
+  [/^(#\/?)?$/, renderHome],
+  [/^#\/tambah$/, renderAdd],
+  [/^#\/login$/, renderLogin],
+  [/^#\/tagihan$/, renderBills],
+  [/^#\/tagihan\/baru$/, () => renderBillForm(null)],
+  [/^#\/tagihan\/([0-9a-f-]{36})$/, (id) => renderBillForm(id)],
+];
+
+function resolve(hash) {
+  for (const [re, fn] of routes) {
+    const mm = re.exec(hash);
+    if (mm) return () => fn(...mm.slice(1));
+  }
+  return renderHome;
+}
 
 async function route() {
-  const render = routes[location.hash] ?? renderHome;
+  const render = resolve(location.hash);
   try {
     await render();
   } catch (ex) {

@@ -39,6 +39,12 @@ Ditandai: **[pasti]** = disebut langsung oleh pemilik; **[asumsi]** = tafsiran s
 - **[pasti]** Contoh: wifi (Biznet), pembantu, kontrakan. Listrik berubah tiap bulan (`is_variable`).
 - Tiap awal siklus, buat satu `bill_occurrence` per tagihan aktif dengan `due_date` di dalam siklus. Menekan "Bayar" membuat transaksi pengeluaran dan menautkannya ke `bill_occurrence`, status menjadi `paid`.
 - **[terbuka]** Nominal dan tanggal jatuh tempo asli belum diketahui. Nilai di desain hanya contoh.
+- Tagihan siklus dibuat saat layar Tagihan atau Beranda dibuka untuk siklus berjalan atau lampau, bukan untuk siklus mendatang. Tagihan baru langsung muncul di siklus berjalan.
+- Tanggal jatuh tempo 25–31 jatuh di awal siklus, 1–24 di akhir siklus. Tanggal yang tidak ada di bulan itu (31 Nov) dimundurkan ke akhir bulan.
+- **[asumsi]** Transaksi pembayaran masuk siklus tagihannya, walau tanggal bayarnya sebelum siklus dimulai.
+- Mengubah tagihan memperbarui tagihan siklus berjalan yang belum dibayar. Menonaktifkan menghapusnya dari siklus berjalan; riwayat tetap ada.
+- Tagihan bisa dilewati untuk satu siklus (`status = skipped`), mis. pembantu libur. Menghapus transaksi pembayaran mengembalikan tagihan ke belum dibayar.
+- **[asumsi]** Layar Tagihan hanya untuk anggota yang boleh melihat laporan.
 
 ### Budget makan harian
 - **[pasti]** Kategori Makan dan Minum: Rp300.000 hari kerja, Rp200.000 akhir pekan. Ada peringatan bila total hari itu melebihi batas.
@@ -82,5 +88,5 @@ Catatan lama punya kolom: tanggal, kategori, keterangan, sumber, jumlah (bertand
 
 ## Belum diputuskan
 - Alur mengundang anggota dari aplikasi. Untuk sekarang login diatur lewat `npm run set-login`.
-- Form tambah tagihan berulang dan layar pengaturan batas budget harian.
+- Layar pengaturan batas budget harian.
 - Keputusan kategori Investasi di atas.

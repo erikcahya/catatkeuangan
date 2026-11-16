@@ -46,3 +46,22 @@ test('isValidDate menolak tanggal mustahil', () => {
   assert.equal(isValidDate('2026-2-3'), false);
   assert.equal(isValidDate('2028-02-29'), true);
 });
+
+import { billDueDate } from '../src/lib/dates.js';
+
+test('billDueDate selalu jatuh di dalam siklusnya', () => {
+  assert.equal(billDueDate('2026-11-25', 22), '2026-12-22');
+  assert.equal(billDueDate('2026-11-25', 1), '2026-12-01');
+  assert.equal(billDueDate('2026-11-25', 24), '2026-12-24');
+  assert.equal(billDueDate('2026-11-25', 25), '2026-11-25');
+  assert.equal(billDueDate('2026-11-25', 28), '2026-11-28');
+  assert.equal(billDueDate('2026-11-25', 31), '2026-11-30');
+  assert.equal(billDueDate('2026-12-25', 10), '2027-01-10');
+  assert.equal(billDueDate('2027-01-25', 31), '2027-01-31');
+  for (let dom = 1; dom <= 31; dom++) {
+    for (const start of ['2026-01-25', '2026-02-25', '2027-12-25']) {
+      const d = billDueDate(start, dom);
+      assert.equal(cycleStart(d), start, `${start} due ${dom} -> ${d}`);
+    }
+  }
+});

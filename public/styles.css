@@ -245,3 +245,45 @@ a { color: var(--primary); text-decoration: none; }
 }
 .slider-dots button[aria-current="true"]::before { width: 18px; background: var(--primary); }
 @media (prefers-reduced-motion: reduce) { .slider-dots button::before { transition: none; } }
+
+/* ---------- Tagihan berulang ---------- */
+.topbar.start { justify-content: flex-start; }
+a.tile { color: var(--text); }
+a.tile:focus-visible, .link-row:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.danger-text { font-size: 12px; color: var(--danger); font-weight: 500; }
+.bill-summary { padding: 16px; border-radius: 16px; display: flex; flex-direction: column; gap: 8px; }
+.big-amount { font-size: 28px; font-weight: 600; letter-spacing: -0.5px; }
+.em-track.neutral { height: 8px; border-radius: 4px; background: var(--track); }
+.em-track.neutral > div { background: var(--primary); }
+.amt.strong { font-weight: 600; }
+.amt.muted { color: var(--muted); text-decoration: line-through; }
+.trx-item .right { gap: 10px; }
+.btn-pill {
+  height: 44px; padding: 0 16px; border-radius: 22px; border: none;
+  background: var(--primary); color: var(--on-primary);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.btn-pill.outline { background: var(--surface); color: var(--primary); border: 1.5px solid var(--primary); }
+.link-row { color: var(--text); }
+.btn-outline {
+  height: 52px; border-radius: 14px; border: 1.5px solid var(--primary);
+  background: var(--surface); color: var(--primary);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; font-weight: 600;
+}
+.btn-text {
+  min-height: 44px; padding: 0 12px; border: none; background: transparent;
+  color: var(--primary); font-weight: 600; cursor: pointer;
+}
+
+/* Dialog bawah (bayar tagihan) */
+dialog.sheet {
+  width: 100%; max-width: 480px; margin: auto auto 0; padding: 0; border: none;
+  border-radius: 20px 20px 0 0; background: var(--bg); color: var(--text);
+}
+dialog.sheet::backdrop { background: rgba(15, 30, 26, .45); }
+.sheet-body {
+  padding: 20px 20px max(20px, env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; gap: 14px;
+}
+.sheet-actions { display: flex; justify-content: space-between; }

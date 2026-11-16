@@ -25,3 +25,12 @@ test('esc menetralkan HTML', () => {
   assert.equal(esc('<b>"a" & \'b\'</b>'), '&lt;b&gt;&quot;a&quot; &amp; &#39;b&#39;&lt;/b&gt;');
   assert.equal(esc(null), '');
 });
+
+import { tanggalPendek, selisihHari } from '../public/format.js';
+
+test('tanggalPendek dan selisihHari', () => {
+  assert.equal(tanggalPendek('2026-12-22'), '22 Des');
+  assert.equal(selisihHari('2026-11-16', '2026-11-22'), 6);
+  assert.equal(selisihHari('2026-12-30', '2027-01-02'), 3);
+  assert.equal(selisihHari('2026-11-16', '2026-11-10'), -6);
+});
