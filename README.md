@@ -25,7 +25,8 @@ Anggota lain diberi login dengan cara yang sama (`Istri`, `Anak` adalah nama pen
 | `npm start` | Server biasa |
 | `npm run migrate` | Jalankan migrasi yang belum dijalankan |
 | `npm run set-login -- <nama> <email> <sandi>` | Atur login seorang anggota |
-| `npm test` | Tes (tanpa database) |
+| `npm test` | Tes cepat (tanpa database) |
+| `npm run test:db` | Tes integrasi ke `TEST_DATABASE_URL` (database itu dikosongkan tiap kali jalan) |
 
 ## Struktur
 
