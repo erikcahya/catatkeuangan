@@ -195,6 +195,39 @@ function billsAndSavings(s) {
   </div>`;
 }
 
+/** Kartu yang bisa digeser ke samping, dengan titik penanda. Satu kartu = tanpa slider. */
+function slider(cards) {
+  if (cards.length === 0) return '';
+  if (cards.length === 1) return cards[0];
+  return `<section class="slider" aria-roledescription="carousel" aria-label="Budget makan dan rekening darurat">
+    <div class="slider-track">
+      ${cards.map((c, i) => `<div class="slide" aria-roledescription="slide" aria-label="${i + 1} dari ${cards.length}">${c}</div>`).join('')}
+    </div>
+    <div class="slider-dots">
+      ${cards.map((_, i) => `<button type="button" data-slide="${i}" aria-label="Tampilkan kartu ${i + 1}"${i === 0 ? ' aria-current="true"' : ''}></button>`).join('')}
+    </div>
+  </section>`;
+}
+
+function setupSliders(root) {
+  root.querySelectorAll('.slider').forEach((el) => {
+    const track = el.querySelector('.slider-track');
+    const dots = [...el.querySelectorAll('[data-slide]')];
+    const slides = [...track.children];
+    dots.forEach((d) => d.addEventListener('click', () => {
+      track.scrollTo({ left: slides[Number(d.dataset.slide)].offsetLeft - track.offsetLeft, behavior: 'smooth' });
+    }));
+    let raf = 0;
+    track.addEventListener('scroll', () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const i = Math.round(track.scrollLeft / track.clientWidth);
+        dots.forEach((d, j) => (j === i ? d.setAttribute('aria-current', 'true') : d.removeAttribute('aria-current')));
+      });
+    }, { passive: true });
+  });
+}
+
 async function renderHome() {
   const m = await loadMeta();
   const q = selectedCycle ? `?cycle=${selectedCycle}` : '';
@@ -221,8 +254,10 @@ async function renderHome() {
         </div>
       </div>
       ${s.restricted ? '' : cycleCard(s)}
-      ${s.cycle.status === 'current' ? s.daily_budgets.map(dailyCard).join('') : ''}
-      ${s.restricted || !s.emergency ? '' : emergencyCard(s.emergency)}
+      ${slider([
+        ...(s.cycle.status === 'current' ? s.daily_budgets.map(dailyCard) : []),
+        ...(s.restricted || !s.emergency ? [] : [emergencyCard(s.emergency)]),
+      ])}
       ${s.restricted ? '' : billsAndSavings(s)}
       <div class="section-head"><h2>Transaksi terbaru</h2></div>
       ${items.length
@@ -232,6 +267,7 @@ async function renderHome() {
     ${tabbar('#/')}
   </div>`;
 
+  setupSliders(app);
   document.getElementById('cycle-select')?.addEventListener('change', (e) => {
     selectedCycle = e.target.value === m.cycle.start ? null : e.target.value;
     renderHome();

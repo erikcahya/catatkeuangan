@@ -223,3 +223,25 @@ a { color: var(--primary); text-decoration: none; }
 }
 .em-track { height: 6px; border-radius: 3px; background: #F0DDB6; overflow: hidden; }
 .em-track > div { height: 100%; background: var(--warn); }
+
+/* Slider kartu (budget makan, rekening darurat) */
+.slider { display: flex; flex-direction: column; gap: 8px; }
+.slider-track {
+  display: grid; grid-auto-flow: column; grid-auto-columns: 100%; gap: 12px;
+  overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.slider-track::-webkit-scrollbar { display: none; }
+.slide { scroll-snap-align: start; display: flex; }
+.slide > .card { flex: 1; }
+.slider-dots { display: flex; justify-content: center; gap: 2px; }
+.slider-dots button {
+  width: 24px; height: 24px; border: none; background: transparent; padding: 0; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.slider-dots button::before {
+  content: ''; width: 7px; height: 7px; border-radius: 4px; background: var(--border-strong);
+  transition: width .2s, background .2s;
+}
+.slider-dots button[aria-current="true"]::before { width: 18px; background: var(--primary); }
+@media (prefers-reduced-motion: reduce) { .slider-dots button::before { transition: none; } }
