@@ -6,7 +6,9 @@ import { cycleLabel, cycleStart, isValidDate, salaryCycleStart } from '../lib/da
 
 const SALARY_CATEGORY = 'Gaji';
 const uuid = { type: 'string', format: 'uuid' };
-const nullableUuid = { anyOf: [uuid, { type: 'null' }] };
+// type array: Fastify hanya mengubah tipe bila nilai tidak cocok dengan tipe mana pun,
+// jadi null tetap null (anyOf mengubah null menjadi "" atau 0 lebih dulu).
+const nullableUuid = { type: ['string', 'null'], format: 'uuid' };
 
 export const LIST_SQL = `
   select t.id, t.kind, t.amount, t.trx_date, t.note, t.is_one_off, t.created_at, t.updated_at,
@@ -62,7 +64,7 @@ export default async function trxRoutes(app) {
           account_id: nullableUuid,
           to_account_id: nullableUuid,
           category_id: nullableUuid,
-          note: { anyOf: [{ type: 'string', maxLength: 300 }, { type: 'null' }] },
+          note: { type: ['string', 'null'], maxLength: 300 },
           is_one_off: { type: 'boolean', default: false },
           from_emergency: { type: 'boolean', default: false },
         },

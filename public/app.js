@@ -188,11 +188,11 @@ function billsAndSavings(s) {
       <span class="tile-value small">${rupiah(b.total)}</span>
       <span class="${b.unpaid_count > 0 ? 'warn-text' : 'tile-label'} tiny">${billNote}</span>
     </a>
-    <div class="tile">
+    <a class="tile" href="#/tabungan">
       <span class="tile-label">Tabungan dan investasi</span>
       <span class="tile-value small">${rupiah(s.savings.deposited)}</span>
       <span class="in tiny">Disetor siklus ini</span>
-    </div>
+    </a>
   </div>`;
 }
 
@@ -296,11 +296,15 @@ async function renderHome() {
 
 const KIND_LABEL = { expense: 'Pengeluaran', income: 'Pemasukan', transfer: 'Transfer' };
 
-async function renderAdd() {
+/**
+ * @param preset  { kind, toAccountId, title, back } — dipakai mis. oleh "Catat setoran"
+ */
+async function renderAdd(preset = {}) {
   const m = await loadMeta();
   const regular = m.accounts.filter((a) => !a.is_emergency);
   const emergency = m.accounts.find((a) => a.is_emergency);
-  const state = { kind: 'expense' };
+  const state = { kind: preset.kind ?? 'expense' };
+  const back = preset.back ?? '#/';
 
   const options = (list, selected) => list
     .map((x) => `<option value="${esc(x.id)}"${x.id === selected ? ' selected' : ''}>${esc(x.name)}</option>`)
@@ -309,8 +313,8 @@ async function renderAdd() {
   app.innerHTML = `<form class="screen" id="add-form" novalidate>
     <div class="screen-body">
       <div class="topbar">
-        <h1 class="title">Tambah transaksi</h1>
-        <a class="icon-btn" href="#/" aria-label="Tutup">${ICON.close}</a>
+        <h1 class="title">${esc(preset.title ?? 'Tambah transaksi')}</h1>
+        <a class="icon-btn" href="${back}" aria-label="Tutup">${ICON.close}</a>
       </div>
       <div class="segmented" role="group" aria-label="Jenis transaksi">
         ${Object.entries(KIND_LABEL).map(([k, label]) =>
@@ -336,7 +340,7 @@ async function renderAdd() {
         </div>
         <div class="row" id="row-to" hidden>
           <label for="to_account">Ke rekening</label>
-          <select id="to_account" name="to_account">${options(m.accounts, emergency?.id ?? m.accounts[1]?.id)}</select>
+          <select id="to_account" name="to_account">${options(m.accounts, preset.toAccountId ?? emergency?.id ?? m.accounts[1]?.id)}</select>
         </div>
         <div class="row">
           <label for="trx_date">Tanggal</label>
@@ -430,7 +434,7 @@ async function renderAdd() {
     btn.disabled = true;
     try {
       const res = await api('/api/trx', { method: 'POST', body });
-      location.hash = '#/';
+      location.hash = back;
       const d = res.daily_budget;
       if (d && d.over > 0) {
         toast(`Budget makan ${tanggal(d.date)} terlewati ${rupiah(d.over)} (total ${rupiah(d.total)} dari ${rupiah(d.limit)}).`, { warn: true });
@@ -852,6 +856,104 @@ async function renderEmergency() {
   }));
 }
 
+// ---------- Layar 5: tabungan dan investasi ----------
+
+async function renderSavings() {
+  const m = await loadMeta();
+  if (!m.user.can_view_reports) { location.hash = '#/'; return; }
+  const s = await api(`/api/savings${selectedCycle ? `?cycle=${selectedCycle}` : ''}`);
+
+  const signed = (n) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${rupiah(n)}`;
+  const row = (a) => {
+    const value = a.current_value == null
+      ? '<span class="warn-text tiny">Nilai sekarang belum diisi</span>'
+      : `<span class="tile-label">Nilai sekarang ${rupiah(a.current_value)}${a.gain != null
+        ? ` · <span class="${a.gain >= 0 ? 'in' : 'danger-text'}">${signed(a.gain)}</span>` : ''}</span>`;
+    return `<li><button type="button" class="trx-item link-row as-button" data-asset="${esc(a.account_id)}"
+        aria-label="${esc(a.name)}: ubah nilai sekarang">
+      <div class="main">
+        <span class="name">${esc(a.name)}</span>
+        <span class="tile-label">Total setoran ${rupiah(a.net_invested)}</span>
+      </div>
+      <div class="main end">
+        <span class="amt strong">${signed(a.cycle_net)}</span>
+        ${value}
+      </div>
+    </button></li>`;
+  };
+
+  const inv = s.investasi_expense;
+  app.innerHTML = `<div class="screen">
+    <div class="screen-body">
+      ${backHeader(`Siklus ${s.cycle.label}`, 'Tabungan dan investasi')}
+      <section class="hero">
+        <span class="hero-label">Disetor siklus ini</span>
+        <span class="hero-amount">${rupiah(s.deposited_cycle)}</span>
+        <span class="hero-label">Transfer ke rekening aset, tidak dihitung sebagai pengeluaran${s.withdrawn_cycle
+          ? ` · ditarik ${rupiah(s.withdrawn_cycle)}` : ''}</span>
+      </section>
+      ${inv.count ? `<div class="note-box">Ada ${inv.count} transaksi (${rupiah(inv.amount)}) di kategori pengeluaran
+        "Investasi" pada siklus ini. Itu dihitung sebagai pengeluaran, bukan setoran. Untuk setoran berikutnya pakai
+        "Catat setoran".</div>` : ''}
+      <div class="section-head"><h2>Per aset</h2></div>
+      ${s.assets.length
+        ? `<ul class="trx-list">${s.assets.map(row).join('')}</ul>`
+        : '<p class="empty">Belum ada rekening berjenis aset.</p>'}
+      <p class="tile-label">Nilai sekarang diisi manual dan boleh dikosongkan; tekan aset untuk mengubahnya.
+        Total setoran dihitung dari transfer yang Anda catat (setoran dikurangi penarikan).</p>
+    </div>
+    ${s.assets.length ? '<div class="footer"><a class="btn-primary as-link" href="#/tabungan/setor">Catat setoran</a></div>' : ''}
+  </div>
+  <dialog id="value-dialog" class="sheet" aria-labelledby="value-title"></dialog>`;
+
+  const dlg = document.getElementById('value-dialog');
+  app.querySelectorAll('[data-asset]').forEach((btn) => btn.addEventListener('click', () => {
+    const a = s.assets.find((x) => x.account_id === btn.dataset.asset);
+    dlg.innerHTML = `<form class="sheet-body" novalidate>
+      <h2 id="value-title" class="title">Nilai ${esc(a.name)} sekarang</h2>
+      <div class="error" hidden></div>
+      <div class="card field amount">
+        <label for="v-amount">Nilai sekarang (kosongkan bila tidak tahu)</label>
+        <input id="v-amount" inputmode="numeric" autocomplete="off" placeholder="Rp 0"
+          value="${a.current_value == null ? '' : rupiah(a.current_value)}">
+      </div>
+      <p class="tile-label">Total setoran ${rupiah(a.net_invested)}${a.as_of_date ? ` · terakhir diisi ${esc(tanggal(a.as_of_date))}` : ''}</p>
+      <button class="btn-primary" type="submit">Simpan</button>
+      <div class="sheet-actions"><span></span><button type="button" class="btn-text" id="v-cancel">Batal</button></div>
+    </form>`;
+    const f = dlg.querySelector('form');
+    const amt = f.querySelector('#v-amount');
+    amt.addEventListener('input', () => { const n = parseRupiah(amt.value); amt.value = amt.value.trim() ? rupiah(n) : ''; });
+    f.querySelector('#v-cancel').addEventListener('click', () => dlg.close());
+    f.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const raw = amt.value.trim();
+      try {
+        await api(`/api/savings/${a.account_id}/value`, {
+          method: 'PUT',
+          body: { current_value: raw ? parseRupiah(raw) : null },
+        });
+        dlg.close();
+        toast(raw ? `Nilai ${a.name} disimpan.` : `Nilai ${a.name} dikosongkan.`);
+        renderSavings();
+      } catch (ex) {
+        const err = f.querySelector('.error');
+        err.textContent = ex.message;
+        err.hidden = false;
+      }
+    });
+    dlg.showModal();
+    amt.focus();
+  }));
+}
+
+/** "Catat setoran" = form tambah transaksi, jenis transfer, tujuan rekening aset pertama. */
+async function renderDeposit() {
+  const m = await loadMeta();
+  const asset = m.accounts.find((a) => a.kind === 'asset');
+  return renderAdd({ kind: 'transfer', toAccountId: asset?.id, title: 'Catat setoran', back: '#/tabungan' });
+}
+
 // ---------- Router ----------
 
 const routes = [
@@ -859,6 +961,8 @@ const routes = [
   [/^#\/tambah$/, renderAdd],
   [/^#\/login$/, renderLogin],
   [/^#\/darurat$/, renderEmergency],
+  [/^#\/tabungan$/, renderSavings],
+  [/^#\/tabungan\/setor$/, renderDeposit],
   [/^#\/tagihan$/, renderBills],
   [/^#\/tagihan\/baru$/, () => renderBillForm(null)],
   [/^#\/tagihan\/([0-9a-f-]{36})$/, (id) => renderBillForm(id)],

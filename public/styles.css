@@ -315,3 +315,12 @@ fieldset.plain { margin: 0; padding: 0; min-width: 0; }
   clip: rect(0 0 0 0); white-space: nowrap;
 }
 dialog.sheet { max-height: 90dvh; overflow-y: auto; }
+
+/* ---------- Tabungan ---------- */
+.as-button {
+  width: 100%; border: none; border-bottom: 1px solid var(--border); background: transparent;
+  text-align: left; cursor: pointer; font: inherit; color: var(--text);
+}
+.as-button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.trx-item .main.end { align-items: flex-end; text-align: right; }
+.btn-primary.as-link { display: flex; align-items: center; justify-content: center; }

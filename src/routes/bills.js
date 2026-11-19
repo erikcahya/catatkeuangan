@@ -5,7 +5,7 @@ import { cycleEnd, cycleLabel, cycleStart, isValidDate, todayJakarta } from '../
 
 const uuid = { type: 'string', format: 'uuid' };
 const idParams = { type: 'object', properties: { id: uuid }, required: ['id'] };
-const nullableInt = (min, max) => ({ anyOf: [{ type: 'integer', minimum: min, maximum: max }, { type: 'null' }] });
+const nullableInt = (min, max) => ({ type: ['integer', 'null'], minimum: min, maximum: max });
 
 // Jadwal: isi due_dom (tanggal tetap tiap bulan) ATAU interval_days + anchor_date
 // (tiap N hari sejak pembayaran terakhir; anchor_date = pembayaran terakhir sebelum dicatat).
@@ -21,7 +21,7 @@ const billBody = {
     is_variable: { type: 'boolean', default: false },
     due_dom: nullableInt(1, 31),
     interval_days: nullableInt(7, 366),
-    anchor_date: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+    anchor_date: { type: ['string', 'null'] },
     remind_days_before: { type: 'integer', minimum: 0, maximum: 28, default: 3 },
     is_active: { type: 'boolean', default: true },
   },
@@ -200,7 +200,7 @@ export default async function billRoutes(app) {
           amount: { type: 'integer', minimum: 1, maximum: 999_999_999_999 },
           trx_date: { type: 'string' },
           account_id: uuid,
-          note: { anyOf: [{ type: 'string', maxLength: 300 }, { type: 'null' }] },
+          note: { type: ['string', 'null'], maxLength: 300 },
         },
       },
     },

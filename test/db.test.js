@@ -17,7 +17,7 @@ let pool, app, sid, erik, acc, cat;
 before(async () => {
   if (skip) return;
   pool = createPool(url);
-  await pool.query(`truncate emergency_debt, bill_occurrence, recurring_bill, budget, trx, pay_cycle, session restart identity cascade`);
+  await pool.query(`truncate emergency_debt, bill_occurrence, recurring_bill, budget, savings_holding, trx, pay_cycle, session restart identity cascade`);
   erik = (await pool.query(`select * from app_user where name = 'Erik'`)).rows[0];
   acc = Object.fromEntries((await pool.query('select name, id from account')).rows.map((r) => [r.name, r.id]));
   cat = Object.fromEntries((await pool.query('select name, id from category')).rows.map((r) => [r.name, r.id]));
@@ -405,4 +405,42 @@ test('rekening darurat: lunasi beberapa utang sekaligus, lalu batalkan', { skip 
   assert.equal(e.open_debt, before);
   assert.ok(!e.repayments.some((x) => x.trx_id === r.json().trx_id));
   assert.ok((await pool.query('select deleted_at from trx where id = $1', [r.json().trx_id])).rows[0].deleted_at);
+});
+
+test('tabungan: setoran per aset, nilai sekarang manual', { skip }, async () => {
+  const m = (await app.inject({ url: '/api/meta', cookies: { sid } })).json();
+  const get = async () => (await app.inject({ url: '/api/savings', cookies: { sid } })).json();
+  const before = await get();
+  const kripto0 = before.assets.find((a) => a.name === 'Kripto');
+
+  const tf = (from, to, amount) => post({ kind: 'transfer', amount, trx_date: m.today,
+    account_id: acc[from], to_account_id: acc[to] });
+  assert.equal((await tf('Rek. utama', 'Kripto', 4000000)).statusCode, 201);
+  assert.equal((await tf('Rek. utama', 'Kripto', 1000000)).statusCode, 201);
+  assert.equal((await tf('Kripto', 'Rek. utama', 500000)).statusCode, 201); // jual sebagian
+
+  let s = await get();
+  const k = s.assets.find((a) => a.name === 'Kripto');
+  assert.equal(k.cycle_in - kripto0.cycle_in, 5000000);
+  assert.equal(k.net_invested - kripto0.net_invested, 4500000);
+  assert.equal(k.current_value, null);
+  assert.equal(k.gain, null);
+  assert.equal(s.deposited_cycle - before.deposited_cycle, 5000000);
+  assert.deepEqual(s.assets.map((a) => a.name), ['Emas', 'Kripto', 'Saham']);
+
+  // Isi nilai sekarang, lalu kosongkan lagi.
+  const put = (accountId, current_value) => app.inject({ method: 'PUT', url: `/api/savings/${accountId}/value`,
+    cookies: { sid }, payload: { current_value } });
+  assert.equal((await put(acc['Kripto'], 7000000)).statusCode, 200);
+  s = await get();
+  const k2 = s.assets.find((a) => a.name === 'Kripto');
+  assert.equal(k2.current_value, 7000000);
+  assert.equal(k2.gain, 7000000 - k2.net_invested);
+  assert.equal(k2.as_of_date, m.today);
+  assert.equal((await put(acc['Kripto'], null)).statusCode, 200);
+  assert.equal((await get()).assets.find((a) => a.name === 'Kripto').current_value, null);
+  assert.equal((await pool.query('select count(*)::int n from savings_holding')).rows[0].n, 1);
+
+  // Bukan rekening aset ditolak.
+  assert.equal((await put(acc['Rek. utama'], 1)).statusCode, 404);
 });

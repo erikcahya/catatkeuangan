@@ -35,7 +35,8 @@ Ditandai: **[pasti]** = disebut langsung oleh pemilik; **[asumsi]** = tafsiran s
 - **[pasti]** Transfer ke rekening sendiri bukan pengeluaran dan bukan tabungan baru (`kind = 'transfer'`).
 - **[pasti]** Uang kontrakan yang disisihkan dicatat di kategori Tagihan dan dihitung sebagai tagihan (`counts_as_bill`), bukan tabungan.
 - **[asumsi]** Setoran investasi adalah transfer ke rekening berjenis `asset`. Total setoran per aset dihitung dari transfer itu. `savings_holding.current_value` diisi manual dan boleh kosong.
-- **[terbuka]** Kategori "Investasi" ada di catatan lama sebagai pengeluaran. Belum diputuskan: tetap ada, atau semua setoran investasi dipindah ke transfer.
+- **[asumsi, 19 Nov 2026]** Setoran investasi dicatat sebagai transfer ke rekening aset ("Catat setoran" di layar Tabungan). Kategori pengeluaran "Investasi" tetap ada untuk catatan lama, tetapi tidak dihitung sebagai setoran; layar Tabungan memberi tanda bila ada transaksi di kategori itu.
+- Total setoran per aset = transfer masuk - transfer keluar (sepanjang waktu). Nilai sekarang diisi manual per rekening aset (`savings_holding`, satu baris per rekening) dan boleh dikosongkan.
 
 ### Tagihan berulang
 - **[pasti]** Contoh: wifi (Biznet), pembantu, kontrakan. Listrik berubah tiap bulan (`is_variable`).
@@ -93,4 +94,3 @@ Catatan lama punya kolom: tanggal, kategori, keterangan, sumber, jumlah (bertand
 ## Belum diputuskan
 - Alur mengundang anggota dari aplikasi. Untuk sekarang login diatur lewat `npm run set-login`.
 - Layar pengaturan batas budget harian.
-- Keputusan kategori Investasi di atas.
