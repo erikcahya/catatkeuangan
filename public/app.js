@@ -108,9 +108,11 @@ const pct = (part, whole) => (whole > 0 ? Math.min(100, Math.max(0, (part / whol
 
 function trxLine(t, { withDelete = true } = {}) {
   const sign = t.kind === 'income' ? '+' : t.kind === 'expense' ? '−' : '';
-  const name = t.note || (t.kind === 'transfer' ? `Transfer ke ${t.to_account_name}` : t.category_name);
+  // Transfer ke rekening aset ditampilkan sebagai "Tabung".
+  const moveLabel = t.to_account_kind === 'asset' ? 'Tabung' : 'Transfer';
+  const name = t.note || (t.kind === 'transfer' ? `${moveLabel} ke ${t.to_account_name}` : t.category_name);
   const where = t.kind === 'transfer'
-    ? `Transfer · ${t.account_name} → ${t.to_account_name}`
+    ? `${moveLabel} · ${t.account_name} → ${t.to_account_name}`
     : t.is_emergency_withdrawal ? `${t.category_name} · utang ke rekening darurat` : `${t.category_name} · ${t.account_name}`;
   return `<li class="trx-item">
     <div class="main">
@@ -294,15 +296,19 @@ async function renderHome() {
 
 // ---------- Layar 1: tambah transaksi ----------
 
-const KIND_LABEL = { expense: 'Pengeluaran', income: 'Pemasukan', transfer: 'Transfer' };
+// "Tabung" = transfer ke rekening aset (kripto, saham, emas). Di server tetap kind 'transfer'.
+const KIND_LABEL = { expense: 'Pengeluaran', income: 'Pemasukan', transfer: 'Transfer', saving: 'Tabung' };
 
 /**
- * @param preset  { kind, toAccountId, title, back } — dipakai mis. oleh "Catat setoran"
+ * @param preset  { kind, toAccountId, title, back } — dipakai mis. oleh tombol "Tabung"
  */
 async function renderAdd(preset = {}) {
   const m = await loadMeta();
   const regular = m.accounts.filter((a) => !a.is_emergency);
   const emergency = m.accounts.find((a) => a.is_emergency);
+  const assets = m.accounts.filter((a) => a.kind === 'asset');
+  const nonAsset = m.accounts.filter((a) => a.kind !== 'asset');
+  const kinds = Object.entries(KIND_LABEL).filter(([k]) => k !== 'saving' || assets.length);
   const state = { kind: preset.kind ?? 'expense' };
   const back = preset.back ?? '#/';
 
@@ -316,8 +322,8 @@ async function renderAdd(preset = {}) {
         <h1 class="title">${esc(preset.title ?? 'Tambah transaksi')}</h1>
         <a class="icon-btn" href="${back}" aria-label="Tutup">${ICON.close}</a>
       </div>
-      <div class="segmented" role="group" aria-label="Jenis transaksi">
-        ${Object.entries(KIND_LABEL).map(([k, label]) =>
+      <div class="segmented${kinds.length === 4 ? ' four' : ''}" role="group" aria-label="Jenis transaksi">
+        ${kinds.map(([k, label]) =>
           `<button type="button" data-kind="${k}" aria-pressed="${k === state.kind}">${label}</button>`).join('')}
       </div>
       <div id="add-err" class="error" hidden></div>
@@ -339,7 +345,7 @@ async function renderAdd(preset = {}) {
           <span class="value">${esc(emergency?.name ?? '—')}</span>
         </div>
         <div class="row" id="row-to" hidden>
-          <label for="to_account">Ke rekening</label>
+          <label for="to_account" id="to-label">Ke rekening</label>
           <select id="to_account" name="to_account">${options(m.accounts, preset.toAccountId ?? emergency?.id ?? m.accounts[1]?.id)}</select>
         </div>
         <div class="row">
@@ -383,14 +389,22 @@ async function renderAdd(preset = {}) {
     const prev = form.category.value;
     form.category.innerHTML = options(cats, cats.some((c) => c.id === prev) ? prev : cats[0]?.id);
     const fromEm = k === 'expense' && form.from_emergency?.checked;
-    show('row-category', k !== 'transfer');
-    show('row-to', k === 'transfer');
+    const moving = k === 'transfer' || k === 'saving';
+    show('row-category', !moving);
+    show('row-to', moving);
     show('expense-toggles', k === 'expense');
     show('row-account', !fromEm);
     show('row-emergency-account', fromEm);
     document.getElementById('account-label').textContent = k === 'income' ? 'Ke rekening' : 'Dari rekening';
-    // Transfer boleh dari rekening mana pun, termasuk rekening darurat.
-    const accList = k === 'transfer' ? m.accounts : regular;
+    document.getElementById('to-label').textContent = k === 'saving' ? 'Ke tabungan' : 'Ke rekening';
+    if (moving) {
+      const toList = k === 'saving' ? assets : m.accounts;
+      const prevTo = form.to_account.value;
+      const fallback = k === 'saving' ? (preset.toAccountId ?? assets[0]?.id) : (emergency?.id ?? m.accounts[1]?.id);
+      form.to_account.innerHTML = options(toList, toList.some((a) => a.id === prevTo) ? prevTo : fallback);
+    }
+    // Transfer boleh dari rekening mana pun, termasuk rekening darurat; tabung dari rekening non-aset.
+    const accList = k === 'transfer' ? m.accounts : k === 'saving' ? nonAsset : regular;
     const prevAcc = form.account.value;
     form.account.innerHTML = options(accList, accList.some((a) => a.id === prevAcc) ? prevAcc : accList[0]?.id);
   }
@@ -414,18 +428,19 @@ async function renderAdd(preset = {}) {
     const fail = (msg, el) => { err.textContent = msg; err.hidden = false; el?.focus(); };
     if (!amount) return fail('Isi jumlahnya dulu.', form.amount);
     if (!form.trx_date.value) return fail('Isi tanggalnya.', form.trx_date);
-    if (state.kind === 'transfer' && form.account.value === form.to_account.value) {
+    const moving = state.kind === 'transfer' || state.kind === 'saving';
+    if (moving && form.account.value === form.to_account.value) {
       return fail('Rekening asal dan tujuan harus berbeda.', form.to_account);
     }
 
     const isExpense = state.kind === 'expense';
     const body = {
-      kind: state.kind,
+      kind: moving ? 'transfer' : state.kind,
       amount,
       trx_date: form.trx_date.value,
       account_id: form.account.value || null,
-      to_account_id: state.kind === 'transfer' ? form.to_account.value : null,
-      category_id: state.kind === 'transfer' ? null : form.category.value,
+      to_account_id: moving ? form.to_account.value : null,
+      category_id: moving ? null : form.category.value,
       note: form.note.value.trim() || null,
       is_one_off: isExpense && form.is_one_off.checked,
       from_emergency: isExpense && !!form.from_emergency?.checked,
@@ -889,20 +904,20 @@ async function renderSavings() {
       <section class="hero">
         <span class="hero-label">Disetor siklus ini</span>
         <span class="hero-amount">${rupiah(s.deposited_cycle)}</span>
-        <span class="hero-label">Transfer ke rekening aset, tidak dihitung sebagai pengeluaran${s.withdrawn_cycle
+        <span class="hero-label">Uang yang ditabung, tidak dihitung sebagai pengeluaran${s.withdrawn_cycle
           ? ` · ditarik ${rupiah(s.withdrawn_cycle)}` : ''}</span>
       </section>
       ${inv.count ? `<div class="note-box">Ada ${inv.count} transaksi (${rupiah(inv.amount)}) di kategori pengeluaran
         "Investasi" pada siklus ini. Itu dihitung sebagai pengeluaran, bukan setoran. Untuk setoran berikutnya pakai
-        "Catat setoran".</div>` : ''}
+        tombol "Tabung".</div>` : ''}
       <div class="section-head"><h2>Per aset</h2></div>
       ${s.assets.length
         ? `<ul class="trx-list">${s.assets.map(row).join('')}</ul>`
         : '<p class="empty">Belum ada rekening berjenis aset.</p>'}
       <p class="tile-label">Nilai sekarang diisi manual dan boleh dikosongkan; tekan aset untuk mengubahnya.
-        Total setoran dihitung dari transfer yang Anda catat (setoran dikurangi penarikan).</p>
+        Total setoran dihitung dari yang Anda tabung, dikurangi yang ditarik kembali.</p>
     </div>
-    ${s.assets.length ? '<div class="footer"><a class="btn-primary as-link" href="#/tabungan/setor">Catat setoran</a></div>' : ''}
+    ${s.assets.length ? '<div class="footer"><a class="btn-primary as-link" href="#/tabungan/setor">Tabung</a></div>' : ''}
   </div>
   <dialog id="value-dialog" class="sheet" aria-labelledby="value-title"></dialog>`;
 
@@ -947,11 +962,11 @@ async function renderSavings() {
   }));
 }
 
-/** "Catat setoran" = form tambah transaksi, jenis transfer, tujuan rekening aset pertama. */
+/** Tombol "Tabung" = form tambah transaksi dengan jenis Tabung (transfer ke rekening aset). */
 async function renderDeposit() {
   const m = await loadMeta();
   const asset = m.accounts.find((a) => a.kind === 'asset');
-  return renderAdd({ kind: 'transfer', toAccountId: asset?.id, title: 'Catat setoran', back: '#/tabungan' });
+  return renderAdd({ kind: 'saving', toAccountId: asset?.id, title: 'Tabung', back: '#/tabungan' });
 }
 
 // ---------- Router ----------

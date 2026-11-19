@@ -14,6 +14,7 @@ export const LIST_SQL = `
   select t.id, t.kind, t.amount, t.trx_date, t.note, t.is_one_off, t.created_at, t.updated_at,
          a.name  as account_name,
          ta.name as to_account_name,
+         ta.kind as to_account_kind,
          c.name  as category_name,
          u.name  as recorded_by,
          ub.name as updated_by,
