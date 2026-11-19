@@ -486,3 +486,16 @@ test('daftar transaksi per halaman (offset) tanpa duplikat', { skip }, async () 
   assert.deepEqual(pages.map((t) => t.id), all.map((t) => t.id));
   assert.ok(all.length > 3);
 });
+
+test('daftar transaksi per rentang tanggal', { skip }, async () => {
+  const get = (q) => app.inject({ url: `/api/trx?limit=200&${q}`, cookies: { sid } });
+  const r = (await get('from=2026-11-16&to=2026-11-17')).json().items;
+  assert.ok(r.length > 0);
+  assert.ok(r.every((t) => t.trx_date >= '2026-11-16' && t.trx_date <= '2026-11-17'));
+  const onlyFrom = (await get('from=2026-11-21')).json().items;
+  assert.ok(onlyFrom.every((t) => t.trx_date >= '2026-11-21'));
+  const onlyTo = (await get('to=2025-12-31')).json().items;
+  assert.ok(onlyTo.length > 0 && onlyTo.every((t) => t.trx_date <= '2025-12-31'));
+  assert.equal((await get('from=2026-11-20&to=2026-11-10')).statusCode, 400);
+  assert.equal((await get('from=2026-02-30')).statusCode, 400);
+});

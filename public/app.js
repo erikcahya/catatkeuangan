@@ -1,5 +1,5 @@
 import {
-  rupiah, rupiahSingkat, parseRupiah, tanggal, tanggalPendek, selisihHari, siklusTerakhir, labelSiklus, esc,
+  rupiah, rupiahSingkat, parseRupiah, tanggal, tanggalPendek, selisihHari, esc,
 } from './format.js';
 
 const app = document.getElementById('app');
@@ -1118,33 +1118,39 @@ async function renderCategory(categoryId) {
   }));
 }
 
-// Filter layar Transaksi: null = semua transaksi; selain itu awal siklus (bulan gajian).
+// Filter layar Transaksi: rentang tanggal { from, to } (keduanya opsional); null = semua.
 let trxFilter = null;
 const TRX_PAGE = 50;
 
 async function renderTransactions() {
-  const m = await loadMeta();
-  const cycleOpts = siklusTerakhir(m.cycle.start, 12).map((s) => {
-    const [y, mm] = s.split('-').map(Number);
-    return { start: s, label: `${labelSiklus(s)} ${mm === 12 ? y + 1 : y}` };
-  });
-  if (trxFilter && !cycleOpts.some((c) => c.start === trxFilter)) trxFilter = null;
-
+  await loadMeta();
+  const f = trxFilter ?? { from: '', to: '' };
   const items = [];
   let done = false;
+
+  const filterText = !trxFilter ? ''
+    : trxFilter.from && trxFilter.to ? `${tanggal(trxFilter.from)} – ${tanggal(trxFilter.to)}`
+      : trxFilter.from ? `Sejak ${tanggal(trxFilter.from)}` : `Sampai ${tanggal(trxFilter.to)}`;
 
   app.innerHTML = `<div class="screen">
     <div class="screen-body">
       <h1 class="title">Transaksi</h1>
-      <div class="card rows">
+      <form class="card rows" id="trx-filter" novalidate>
         <div class="row">
-          <label for="trx-filter">Tampilkan</label>
-          <select id="trx-filter">
-            <option value="">Semua</option>
-            ${cycleOpts.map((c) => `<option value="${esc(c.start)}"${c.start === trxFilter ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}
-          </select>
+          <label for="f-from">Dari tanggal</label>
+          <input id="f-from" type="date" value="${esc(f.from)}">
         </div>
-      </div>
+        <div class="row">
+          <label for="f-to">Sampai tanggal</label>
+          <input id="f-to" type="date" value="${esc(f.to)}">
+        </div>
+        <div class="row filter-actions">
+          <button type="button" class="btn-text" id="f-clear"${trxFilter ? '' : ' hidden'}>Hapus filter</button>
+          <button type="submit" class="btn-pill">Terapkan</button>
+        </div>
+      </form>
+      <div id="f-err" class="error" hidden></div>
+      ${trxFilter ? `<p class="tile-label">Menampilkan ${esc(filterText)}</p>` : ''}
       <div id="trx-groups"></div>
       <button type="button" class="btn-outline" id="trx-more" hidden>Muat lebih banyak</button>
     </div>
@@ -1153,6 +1159,8 @@ async function renderTransactions() {
 
   const box = document.getElementById('trx-groups');
   const more = document.getElementById('trx-more');
+  const form = document.getElementById('trx-filter');
+  const err = document.getElementById('f-err');
 
   function draw() {
     const groups = [];
@@ -1165,22 +1173,37 @@ async function renderTransactions() {
           <h2 class="date-head">${esc(tanggal(g.date))}</h2>
           <ul class="trx-list">${g.items.map((t) => trxLine(t)).join('')}</ul>
         </section>`).join('')
-      : `<p class="empty">${trxFilter ? 'Tidak ada transaksi di bulan ini.' : 'Belum ada transaksi. Tekan + untuk mencatat.'}</p>`;
+      : `<p class="empty">${trxFilter ? 'Tidak ada transaksi di rentang tanggal ini.' : 'Belum ada transaksi. Tekan + untuk mencatat.'}</p>`;
     more.hidden = done;
   }
 
   async function load() {
     more.disabled = true;
-    const q = `limit=${TRX_PAGE}&offset=${items.length}${trxFilter ? `&cycle=${trxFilter}` : ''}`;
-    const { items: page } = await api(`/api/trx?${q}`);
+    const p = new URLSearchParams({ limit: TRX_PAGE, offset: items.length });
+    if (trxFilter?.from) p.set('from', trxFilter.from);
+    if (trxFilter?.to) p.set('to', trxFilter.to);
+    const { items: page } = await api(`/api/trx?${p}`);
     items.push(...page);
     done = page.length < TRX_PAGE;
     more.disabled = false;
     draw();
   }
 
-  document.getElementById('trx-filter').addEventListener('change', (e) => {
-    trxFilter = e.target.value || null;
+  // Filter baru berlaku setelah "Terapkan" ditekan.
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const from = form.querySelector('#f-from').value;
+    const to = form.querySelector('#f-to').value;
+    if (from && to && from > to) {
+      err.textContent = 'Tanggal "dari" harus sebelum atau sama dengan tanggal "sampai".';
+      err.hidden = false;
+      return;
+    }
+    trxFilter = from || to ? { from, to } : null;
+    renderTransactions();
+  });
+  document.getElementById('f-clear').addEventListener('click', () => {
+    trxFilter = null;
     renderTransactions();
   });
   more.addEventListener('click', () => load().catch((ex) => toast(ex.message, { warn: true })));

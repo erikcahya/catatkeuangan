@@ -40,18 +40,25 @@ export default async function trxRoutes(app) {
           cycle: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, // awal siklus, opsional
           category_id: uuid, // opsional
           offset: { type: 'integer', minimum: 0, maximum: 1_000_000, default: 0 }, // untuk "muat lebih banyak"
+          from: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, // tanggal transaksi, opsional, inklusif
+          to: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
         },
       },
     },
   }, async (req) => {
+    const q = req.query;
+    if ((q.from && !isValidDate(q.from)) || (q.to && !isValidDate(q.to))) throw new HttpError(400, 'Tanggal tidak valid.');
+    if (q.from && q.to && q.from > q.to) throw new HttpError(400, 'Tanggal awal harus sebelum tanggal akhir.');
     const { rows } = await pool.query(
       `${LIST_SQL}
          and ($3::date is null or t.cycle_id in
               (select id from pay_cycle where household_id = $1 and start_date = $3::date))
          and ($4::uuid is null or t.category_id = $4::uuid)
+         and ($6::date is null or t.trx_date >= $6::date)
+         and ($7::date is null or t.trx_date <= $7::date)
        order by t.trx_date desc, t.created_at desc, t.id desc
        limit $2 offset $5`,
-      [req.user.household_id, req.query.limit, req.query.cycle ?? null, req.query.category_id ?? null, req.query.offset],
+      [req.user.household_id, q.limit, q.cycle ?? null, q.category_id ?? null, q.offset, q.from ?? null, q.to ?? null],
     );
     return { items: rows };
   });
