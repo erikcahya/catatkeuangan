@@ -357,3 +357,5 @@ dialog.sheet { max-height: 90dvh; overflow-y: auto; }
 .cat-items { padding-left: 4px; }
 .facts .row { min-height: 44px; }
 .date-head { font-size: 13px; font-weight: 600; color: var(--muted); margin: 6px 0 0; }
+.btn-text.more { align-self: flex-start; padding: 0; }
+.more-note { padding: 8px 0; }

@@ -992,6 +992,9 @@ function bindChips(root, current, rerender) {
   root.querySelector('.chip[aria-pressed="true"]')?.scrollIntoView({ block: 'nearest', inline: 'center' });
 }
 
+const TOP_CATS = 5;   // kategori yang langsung tampil di laporan
+const CAT_ITEMS = 10; // transaksi yang tampil saat satu kategori dibuka
+
 async function renderReport() {
   const m = await loadMeta();
   if (!m.user.can_view_reports) { location.hash = '#/transaksi'; return; }
@@ -1000,14 +1003,18 @@ async function renderReport() {
   const maxSpent = Math.max(1, ...r.expense_by_category.map((c) => c.total));
   const short = (c) => c.label.replace(/ \d{4}$/, '');
 
-  const catRow = (c) => {
+  // 5 kategori terbesar tampil; sisanya (kecuali yang melewati anggaran) disembunyikan.
+  const isHidden = (c, i) => i >= TOP_CATS && !(c.budget != null && c.total > c.budget);
+  const hiddenCount = r.expense_by_category.filter(isHidden).length;
+
+  const catRow = (c, { hidden = false } = {}) => {
     const hasBudget = c.budget != null;
     const width = hasBudget ? pct(c.total, c.budget) : pct(c.total, maxSpent);
     const over = hasBudget && c.total > c.budget;
     const right = hasBudget
       ? `${rupiahSingkat(c.total)} / ${rupiahSingkat(c.budget).replace('Rp ', '')}`
       : `${rupiahSingkat(c.total)} · ${Math.round(pct(c.total, expense))}%`;
-    return `<li class="cat">
+    return `<li class="cat"${hidden ? ' data-extra hidden' : ''}>
       <button type="button" class="cat-head" data-cat="${esc(c.category_id)}" aria-expanded="false">
         <span class="cat-line"><span class="cat-name">${esc(c.name)}</span>
           <span class="${over ? 'danger-text' : 'tile-label'}">${right}</span></span>
@@ -1032,7 +1039,9 @@ async function renderReport() {
           <span class="tile-label">${r.expense_by_category.some((c) => c.budget != null) ? 'Terpakai / anggaran' : 'Porsi dari pengeluaran'}</span>
         </div>
         ${r.expense_by_category.length
-          ? `<ul class="cats">${r.expense_by_category.map(catRow).join('')}</ul>`
+          ? `<ul class="cats">${r.expense_by_category.map((c, i) => catRow(c, { hidden: isHidden(c, i) })).join('')}</ul>
+            ${hiddenCount ? `<button type="button" class="btn-text more" id="more-cats" aria-expanded="false">
+              Tampilkan ${hiddenCount} kategori lainnya</button>` : ''}`
           : '<p class="empty">Belum ada pengeluaran di siklus ini.</p>'}
       </section>
       ${r.income_by_category.length ? `<section class="card report">
@@ -1051,15 +1060,37 @@ async function renderReport() {
   </div>`;
 
   bindChips(app, m.cycle.start, renderReport);
+  document.getElementById('more-cats')?.addEventListener('click', (ev) => {
+    const btn = ev.currentTarget;
+    const show = btn.getAttribute('aria-expanded') !== 'true';
+    btn.setAttribute('aria-expanded', String(show));
+    btn.textContent = show ? 'Sembunyikan kategori kecil' : `Tampilkan ${hiddenCount} kategori lainnya`;
+    app.querySelectorAll('.cat[data-extra]').forEach((li) => { li.hidden = !show; });
+  });
   app.querySelectorAll('[data-cat]').forEach((btn) => btn.addEventListener('click', async () => {
     const list = btn.nextElementSibling;
     const open = btn.getAttribute('aria-expanded') === 'true';
+    // Hanya satu kategori terbuka dalam satu waktu, supaya laporan tidak memanjang.
+    app.querySelectorAll('[data-cat][aria-expanded="true"]').forEach((other) => {
+      if (other === btn) return;
+      other.setAttribute('aria-expanded', 'false');
+      other.nextElementSibling.hidden = true;
+    });
     btn.setAttribute('aria-expanded', String(!open));
     list.hidden = open;
     if (open || list.dataset.loaded) return;
     list.innerHTML = '<li class="tile-label">Memuat…</li>';
     try {
-      const { items } = await api(`/api/trx?limit=200&cycle=${r.cycle.start}&category_id=${btn.dataset.cat}`);
+      const { items: all } = await api(`/api/trx?limit=200&cycle=${r.cycle.start}&category_id=${btn.dataset.cat}`);
+      // Paling banyak 10 transaksi terbaru; sisanya disebut jumlahnya saja.
+      const items = all.slice(0, CAT_ITEMS);
+      const rest = all.length - items.length;
+      if (rest > 0) {
+        list.innerHTML = items.map((t) => trxLine(t, { withDelete: false })).join('')
+          + `<li class="tile-label more-note">dan ${rest} transaksi lainnya · lihat menu Transaksi</li>`;
+        list.dataset.loaded = '1';
+        return;
+      }
       list.innerHTML = items.map((t) => trxLine(t, { withDelete: false })).join('') || '<li class="tile-label">Tidak ada.</li>';
       list.dataset.loaded = '1';
     } catch (ex) {
