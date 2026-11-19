@@ -39,6 +39,7 @@ export default async function trxRoutes(app) {
           limit: { type: 'integer', minimum: 1, maximum: 200, default: 20 },
           cycle: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, // awal siklus, opsional
           category_id: uuid, // opsional
+          offset: { type: 'integer', minimum: 0, maximum: 1_000_000, default: 0 }, // untuk "muat lebih banyak"
         },
       },
     },
@@ -48,8 +49,9 @@ export default async function trxRoutes(app) {
          and ($3::date is null or t.cycle_id in
               (select id from pay_cycle where household_id = $1 and start_date = $3::date))
          and ($4::uuid is null or t.category_id = $4::uuid)
-       order by t.trx_date desc, t.created_at desc limit $2`,
-      [req.user.household_id, req.query.limit, req.query.cycle ?? null, req.query.category_id ?? null],
+       order by t.trx_date desc, t.created_at desc, t.id desc
+       limit $2 offset $5`,
+      [req.user.household_id, req.query.limit, req.query.cycle ?? null, req.query.category_id ?? null, req.query.offset],
     );
     return { items: rows };
   });

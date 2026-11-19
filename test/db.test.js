@@ -476,3 +476,13 @@ test('laporan siklus: per kategori, transfer tidak dihitung, anggaran bila ada',
   assert.equal(list.items.length, 3);
   assert.ok(list.items.every((t) => t.category_name === 'Makan dan Minum'));
 });
+
+test('daftar transaksi per halaman (offset) tanpa duplikat', { skip }, async () => {
+  const all = (await app.inject({ url: '/api/trx?limit=200', cookies: { sid } })).json().items;
+  const pages = [];
+  for (let off = 0; off < all.length; off += 3) {
+    pages.push(...(await app.inject({ url: `/api/trx?limit=3&offset=${off}`, cookies: { sid } })).json().items);
+  }
+  assert.deepEqual(pages.map((t) => t.id), all.map((t) => t.id));
+  assert.ok(all.length > 3);
+});

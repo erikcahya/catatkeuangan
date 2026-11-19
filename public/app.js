@@ -1118,46 +1118,87 @@ async function renderCategory(categoryId) {
   }));
 }
 
+// Filter layar Transaksi: null = semua transaksi; selain itu awal siklus (bulan gajian).
+let trxFilter = null;
+const TRX_PAGE = 50;
+
 async function renderTransactions() {
   const m = await loadMeta();
-  const start = selectedCycle ?? m.cycle.start;
-  const { items } = await api(`/api/trx?limit=200&cycle=${start}`);
-  const cycles = siklusTerakhir(m.cycle.start, 6).map((s) => ({ start: s, label: labelSiklus(s) }));
-  if (!cycles.some((c) => c.start === start)) cycles.push({ start, label: labelSiklus(start) });
+  const cycleOpts = siklusTerakhir(m.cycle.start, 12).map((s) => {
+    const [y, mm] = s.split('-').map(Number);
+    return { start: s, label: `${labelSiklus(s)} ${mm === 12 ? y + 1 : y}` };
+  });
+  if (trxFilter && !cycleOpts.some((c) => c.start === trxFilter)) trxFilter = null;
 
-  // Kelompokkan per tanggal.
-  const groups = [];
-  for (const t of items) {
-    if (groups.at(-1)?.date !== t.trx_date) groups.push({ date: t.trx_date, items: [] });
-    groups.at(-1).items.push(t);
-  }
+  const items = [];
+  let done = false;
 
   app.innerHTML = `<div class="screen">
     <div class="screen-body">
       <h1 class="title">Transaksi</h1>
-      ${cycleChips(cycles, start)}
-      ${groups.length
-        ? groups.map((g) => `<section aria-label="${esc(tanggal(g.date))}">
-            <h2 class="date-head">${esc(tanggal(g.date))}</h2>
-            <ul class="trx-list">${g.items.map((t) => trxLine(t)).join('')}</ul>
-          </section>`).join('')
-        : '<p class="empty">Belum ada transaksi di siklus ini.</p>'}
-      ${items.length === 200 ? '<p class="tile-label">Menampilkan 200 transaksi terbaru.</p>' : ''}
+      <div class="card rows">
+        <div class="row">
+          <label for="trx-filter">Tampilkan</label>
+          <select id="trx-filter">
+            <option value="">Semua</option>
+            ${cycleOpts.map((c) => `<option value="${esc(c.start)}"${c.start === trxFilter ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div id="trx-groups"></div>
+      <button type="button" class="btn-outline" id="trx-more" hidden>Muat lebih banyak</button>
     </div>
     ${tabbar('#/transaksi')}
   </div>`;
 
-  bindChips(app, m.cycle.start, renderTransactions);
-  app.querySelectorAll('[data-del]').forEach((btn) => btn.addEventListener('click', async () => {
-    if (!confirm('Hapus transaksi ini?')) return;
+  const box = document.getElementById('trx-groups');
+  const more = document.getElementById('trx-more');
+
+  function draw() {
+    const groups = [];
+    for (const t of items) {
+      if (groups.at(-1)?.date !== t.trx_date) groups.push({ date: t.trx_date, items: [] });
+      groups.at(-1).items.push(t);
+    }
+    box.innerHTML = groups.length
+      ? groups.map((g) => `<section aria-label="${esc(tanggal(g.date))}">
+          <h2 class="date-head">${esc(tanggal(g.date))}</h2>
+          <ul class="trx-list">${g.items.map((t) => trxLine(t)).join('')}</ul>
+        </section>`).join('')
+      : `<p class="empty">${trxFilter ? 'Tidak ada transaksi di bulan ini.' : 'Belum ada transaksi. Tekan + untuk mencatat.'}</p>`;
+    more.hidden = done;
+  }
+
+  async function load() {
+    more.disabled = true;
+    const q = `limit=${TRX_PAGE}&offset=${items.length}${trxFilter ? `&cycle=${trxFilter}` : ''}`;
+    const { items: page } = await api(`/api/trx?${q}`);
+    items.push(...page);
+    done = page.length < TRX_PAGE;
+    more.disabled = false;
+    draw();
+  }
+
+  document.getElementById('trx-filter').addEventListener('change', (e) => {
+    trxFilter = e.target.value || null;
+    renderTransactions();
+  });
+  more.addEventListener('click', () => load().catch((ex) => toast(ex.message, { warn: true })));
+  box.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-del]');
+    if (!btn || !confirm('Hapus transaksi ini?')) return;
     try {
       await api(`/api/trx/${btn.dataset.del}`, { method: 'DELETE' });
       toast('Transaksi dihapus.');
-      renderTransactions();
+      const i = items.findIndex((t) => t.id === btn.dataset.del);
+      if (i >= 0) items.splice(i, 1);
+      draw();
     } catch (ex) {
       toast(ex.message, { warn: true });
     }
-  }));
+  });
+
+  await load();
 }
 
 // ---------- Router ----------
