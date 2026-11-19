@@ -14,6 +14,8 @@ const ICON = {
   warn: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.5v.01"/></svg>',
   back: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>',
   next: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>',
+  filter: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>',
+  x: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
 };
 
 // ---------- API ----------
@@ -1129,33 +1131,39 @@ async function renderTransactions() {
   let done = false;
 
   const filterText = !trxFilter ? ''
-    : trxFilter.from && trxFilter.to ? `${tanggal(trxFilter.from)} – ${tanggal(trxFilter.to)}`
-      : trxFilter.from ? `Sejak ${tanggal(trxFilter.from)}` : `Sampai ${tanggal(trxFilter.to)}`;
+    : trxFilter.from && trxFilter.to ? `${tanggalPendek(trxFilter.from)} – ${tanggalPendek(trxFilter.to)}`
+      : trxFilter.from ? `Sejak ${tanggalPendek(trxFilter.from)}` : `Sampai ${tanggalPendek(trxFilter.to)}`;
 
   app.innerHTML = `<div class="screen">
     <div class="screen-body">
-      <h1 class="title">Transaksi</h1>
-      <form class="card rows" id="trx-filter" novalidate>
-        <div class="row">
-          <label for="f-from">Dari tanggal</label>
-          <input id="f-from" type="date" value="${esc(f.from)}">
-        </div>
-        <div class="row">
-          <label for="f-to">Sampai tanggal</label>
-          <input id="f-to" type="date" value="${esc(f.to)}">
-        </div>
-        <div class="row filter-actions">
-          <button type="button" class="btn-text" id="f-clear"${trxFilter ? '' : ' hidden'}>Hapus filter</button>
-          <button type="submit" class="btn-pill">Terapkan</button>
-        </div>
-      </form>
-      <div id="f-err" class="error" hidden></div>
-      ${trxFilter ? `<p class="tile-label">Menampilkan ${esc(filterText)}</p>` : ''}
+      <div class="topbar">
+        <h1 class="title">Transaksi</h1>
+        <button type="button" class="icon-btn${trxFilter ? ' is-active' : ''}" id="f-open"
+          aria-label="Filter tanggal${trxFilter ? ` (aktif: ${esc(filterText)})` : ''}" aria-haspopup="dialog">${ICON.filter}</button>
+      </div>
+      ${trxFilter ? `<div><button type="button" class="filter-chip" id="f-clear"
+        aria-label="Hapus filter ${esc(filterText)}">${esc(filterText)} ${ICON.x}</button></div>` : ''}
       <div id="trx-groups"></div>
       <button type="button" class="btn-outline" id="trx-more" hidden>Muat lebih banyak</button>
     </div>
     ${tabbar('#/transaksi')}
-  </div>`;
+  </div>
+  <dialog id="f-dialog" class="sheet" aria-labelledby="f-title">
+    <form class="sheet-body" id="trx-filter" novalidate>
+      <h2 id="f-title" class="title">Filter tanggal</h2>
+      <div id="f-err" class="error" hidden></div>
+      <div class="card rows">
+        <div class="row"><label for="f-from">Dari</label><input id="f-from" type="date" value="${esc(f.from)}"></div>
+        <div class="row"><label for="f-to">Sampai</label><input id="f-to" type="date" value="${esc(f.to)}"></div>
+      </div>
+      <p class="tile-label">Boleh isi salah satu saja.</p>
+      <button type="submit" class="btn-primary">Terapkan</button>
+      <div class="sheet-actions">
+        <button type="button" class="btn-text" id="f-reset"${trxFilter ? '' : ' hidden'}>Hapus filter</button>
+        <button type="button" class="btn-text" id="f-cancel">Batal</button>
+      </div>
+    </form>
+  </dialog>`;
 
   const box = document.getElementById('trx-groups');
   const more = document.getElementById('trx-more');
@@ -1200,12 +1208,15 @@ async function renderTransactions() {
       return;
     }
     trxFilter = from || to ? { from, to } : null;
+    dlg.close();
     renderTransactions();
   });
-  document.getElementById('f-clear').addEventListener('click', () => {
-    trxFilter = null;
-    renderTransactions();
-  });
+  const dlg = document.getElementById('f-dialog');
+  const clear = () => { dlg.close(); trxFilter = null; renderTransactions(); };
+  document.getElementById('f-open').addEventListener('click', () => { err.hidden = true; dlg.showModal(); });
+  document.getElementById('f-cancel').addEventListener('click', () => dlg.close());
+  document.getElementById('f-reset').addEventListener('click', clear);
+  document.getElementById('f-clear')?.addEventListener('click', clear);
   more.addEventListener('click', () => load().catch((ex) => toast(ex.message, { warn: true })));
   box.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-del]');

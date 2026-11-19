@@ -362,5 +362,9 @@ a.cat-head { text-decoration: none; }
 .cat-line.link:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
 .date-row { display: flex; justify-content: space-between; align-items: baseline; margin-top: 6px; }
 .date-row .date-head { margin: 0; }
-.filter-actions { justify-content: flex-end; gap: 8px; }
-.filter-actions .btn-pill { min-width: 110px; }
+.icon-btn.is-active { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.filter-chip {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px;
+  border-radius: 18px; border: 1px solid var(--primary); background: #E4F1EE; color: var(--primary);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+}
