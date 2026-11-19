@@ -60,7 +60,7 @@ function tabbar(active) {
     ${link('#/', 'Beranda')}
     <span aria-disabled="true" title="Belum tersedia">Transaksi</span>
     <a class="fab" href="#/tambah" aria-label="Tambah transaksi">${ICON.plus}</a>
-    <span aria-disabled="true" title="Belum tersedia">Darurat</span>
+    ${meta?.user.can_view_reports ? link('#/darurat', 'Darurat') : '<span aria-disabled="true">Darurat</span>'}
     <span aria-disabled="true" title="Belum tersedia">Laporan</span>
   </nav>`;
 }
@@ -168,14 +168,14 @@ function dailyCard(d) {
 }
 
 function emergencyCard(e) {
-  return `<section class="card emergency-card" aria-label="${esc(e.name)}">
+  return `<a class="card emergency-card" href="#/darurat">
     <div class="daily-head">
       <span class="daily-title">${esc(e.name)}</span>
       <span class="warn-text">${e.open_debt > 0 ? `Utang belum lunas ${rupiah(e.open_debt)}` : 'Tidak ada utang'}</span>
     </div>
     <div class="em-track"><div style="width:${pct(e.filled, e.target)}%"></div></div>
     <span class="tile-label">Terisi ${rupiah(e.filled)} dari target ${rupiah(e.target)}${e.open_debt > 0 ? ' · isi ulang saat gajian' : ''}</span>
-  </section>`;
+  </a>`;
 }
 
 function billsAndSavings(s) {
@@ -724,12 +724,141 @@ async function renderBillForm(id) {
   });
 }
 
+// ---------- Layar 4: rekening darurat ----------
+
+async function renderEmergency() {
+  const m = await loadMeta();
+  if (!m.user.can_view_reports) { location.hash = '#/'; return; }
+  const e = await api('/api/emergency');
+  const target = e.account.target ?? 0;
+
+  const debtRow = (d) => `<li class="trx-item">
+    <div class="main">
+      <span class="name">${esc(d.note || `Tarik ${e.account.name.toLowerCase()}`)}</span>
+      <span class="tile-label">${esc(tanggal(d.trx_date))} · ${esc(d.category_name ?? '')} · oleh ${esc(d.recorded_by)}</span>
+    </div>
+    <span class="amt strong warn-amt">${rupiah(d.amount)}</span>
+  </li>`;
+
+  const repayRow = (g) => `<li class="trx-item">
+    <div class="main">
+      <span class="name">Lunas ${esc(tanggal(g.repaid_date))}</span>
+      <span class="tile-label">${g.debts.length} penarikan · dari ${esc(g.repaid_from)} · oleh ${esc(g.repaid_by)}</span>
+    </div>
+    <div class="right">
+      <span class="amt in">${rupiah(g.amount)}</span>
+      <button type="button" class="btn-text small" data-undo="${esc(g.trx_id)}" aria-label="Batalkan pelunasan ${esc(tanggal(g.repaid_date))}">Batalkan</button>
+    </div>
+  </li>`;
+
+  app.innerHTML = `<div class="screen">
+    <div class="screen-body">
+      <div><div class="eyebrow">Siklus ${esc(m.cycle.label)}</div><h1 class="title">${esc(e.account.name)}</h1></div>
+      <section class="card emergency-hero">
+        <span class="warn-text">Saldo bulan ini</span>
+        <span class="big-amount">${rupiah(e.filled)}</span>
+        <div class="em-track thick"><div style="width:${pct(e.filled, target)}%"></div></div>
+        <div class="daily-foot">
+          <span class="tile-label">Target ${rupiah(target)}</span>
+          <span class="tile-label">${e.open_debt > 0 ? `Kurang ${rupiah(e.open_debt)}` : 'Penuh'}</span>
+        </div>
+      </section>
+      <section class="card rules">
+        <span class="daily-title">Aturan</span>
+        <span class="rules-text">Rekening ini berisi ${rupiah(target)} tiap siklus. Setiap penarikan dicatat sebagai utang ke rekening sendiri dan dilunasi saat gajian tanggal ${e.payday}.</span>
+      </section>
+      <div class="section-head"><h2>Utang belum lunas</h2></div>
+      ${e.open.length
+        ? `<ul class="trx-list">${e.open.map(debtRow).join('')}</ul>`
+        : '<p class="empty">Tidak ada utang. Penarikan dicatat dari layar Tambah transaksi dengan sakelar "Ambil dari rekening darurat".</p>'}
+      ${e.repayments.length ? `<div class="section-head"><h2>Sudah lunas</h2></div>
+        <ul class="trx-list">${e.repayments.map(repayRow).join('')}</ul>` : ''}
+    </div>
+    ${e.open.length ? '<div class="footer tight"><button type="button" class="btn-primary warn" id="repay">Catat pelunasan</button></div>' : ''}
+    ${tabbar('#/darurat')}
+  </div>
+  <dialog id="repay-dialog" class="sheet" aria-labelledby="repay-title"></dialog>`;
+
+  const dlg = document.getElementById('repay-dialog');
+  document.getElementById('repay')?.addEventListener('click', () => {
+    const sources = m.accounts.filter((a) => !a.is_emergency && a.kind !== 'asset');
+    dlg.innerHTML = `<form class="sheet-body" novalidate>
+      <h2 id="repay-title" class="title">Catat pelunasan</h2>
+      <div class="error" hidden></div>
+      <fieldset class="card rows plain">
+        <legend class="visually-hidden">Utang yang dilunasi</legend>
+        ${e.open.map((d) => `<label class="row toggle">
+          <span class="text"><span>${esc(d.note || 'Penarikan')} · ${rupiah(d.amount)}</span>
+            <span class="tile-label">${esc(tanggal(d.trx_date))} · ${esc(d.category_name ?? '')}</span></span>
+          <input type="checkbox" name="debt" value="${esc(d.id)}" data-amount="${d.amount}" checked>
+        </label>`).join('')}
+      </fieldset>
+      <div class="card rows">
+        <div class="row"><label for="r-from">Dari rekening</label>
+          <select id="r-from">${sources.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join('')}</select></div>
+        <div class="row"><label for="r-date">Tanggal</label>
+          <input id="r-date" type="date" value="${esc(e.today)}"></div>
+      </div>
+      <p class="tile-label">Dicatat sebagai transfer ke ${esc(e.account.name)}, bukan pengeluaran.</p>
+      <button class="btn-primary warn" type="submit" id="r-submit"></button>
+      <div class="sheet-actions"><span></span><button type="button" class="btn-text" id="r-cancel">Batal</button></div>
+    </form>`;
+    const f = dlg.querySelector('form');
+    const err = f.querySelector('.error');
+    const submit = f.querySelector('#r-submit');
+    const boxes = [...f.querySelectorAll('[name="debt"]')];
+    const sync = () => {
+      const chosen = boxes.filter((x) => x.checked);
+      const total = chosen.reduce((s, x) => s + Number(x.dataset.amount), 0);
+      submit.textContent = chosen.length ? `Lunasi ${rupiah(total)}` : 'Pilih utang yang dilunasi';
+      submit.disabled = !chosen.length;
+    };
+    boxes.forEach((x) => x.addEventListener('change', sync));
+    sync();
+    f.querySelector('#r-cancel').addEventListener('click', () => dlg.close());
+    f.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      submit.disabled = true;
+      try {
+        const res = await api('/api/emergency/repay', {
+          method: 'POST',
+          body: {
+            debt_ids: boxes.filter((x) => x.checked).map((x) => x.value),
+            account_id: f.querySelector('#r-from').value,
+            trx_date: f.querySelector('#r-date').value,
+          },
+        });
+        dlg.close();
+        toast(`Pelunasan ${rupiah(res.amount)} tercatat.`);
+        renderEmergency();
+      } catch (ex) {
+        err.textContent = ex.message;
+        err.hidden = false;
+        sync();
+      }
+    });
+    dlg.showModal();
+  });
+
+  app.querySelectorAll('[data-undo]').forEach((btn) => btn.addEventListener('click', async () => {
+    if (!confirm('Batalkan pelunasan ini? Utangnya akan kembali belum lunas.')) return;
+    try {
+      await api(`/api/emergency/repayments/${btn.dataset.undo}`, { method: 'DELETE' });
+      toast('Pelunasan dibatalkan.');
+      renderEmergency();
+    } catch (ex) {
+      toast(ex.message, { warn: true });
+    }
+  }));
+}
+
 // ---------- Router ----------
 
 const routes = [
   [/^(#\/?)?$/, renderHome],
   [/^#\/tambah$/, renderAdd],
   [/^#\/login$/, renderLogin],
+  [/^#\/darurat$/, renderEmergency],
   [/^#\/tagihan$/, renderBills],
   [/^#\/tagihan\/baru$/, () => renderBillForm(null)],
   [/^#\/tagihan\/([0-9a-f-]{36})$/, (id) => renderBillForm(id)],

@@ -8,6 +8,7 @@ import metaRoutes from './routes/meta.js';
 import trxRoutes from './routes/trx.js';
 import summaryRoutes from './routes/summary.js';
 import billRoutes from './routes/bills.js';
+import emergencyRoutes from './routes/emergency.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
 const OPEN_ROUTES = new Set(['/api/auth/login']);
@@ -44,6 +45,7 @@ export function buildApp({ pool, logger = true } = {}) {
   app.register(trxRoutes);
   app.register(summaryRoutes);
   app.register(billRoutes);
+  app.register(emergencyRoutes);
 
   app.setErrorHandler((err, req, reply) => {
     // Pelanggaran constraint database = input salah, bukan kesalahan server.

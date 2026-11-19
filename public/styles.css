@@ -295,3 +295,23 @@ dialog.sheet::backdrop { background: rgba(15, 30, 26, .45); }
   width: 64px; padding: 6px 8px; text-align: right; font-weight: 500;
   border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface);
 }
+
+/* ---------- Rekening darurat ---------- */
+a.emergency-card { color: var(--text); }
+.emergency-hero {
+  background: var(--warn-bg); border-color: #EBD3A4; border-radius: 16px;
+  padding: 18px; display: flex; flex-direction: column; gap: 10px;
+}
+.em-track.thick { height: 8px; border-radius: 4px; }
+.rules { padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+.rules-text { font-size: 13px; color: var(--muted-strong); line-height: 1.5; }
+.warn-amt { color: var(--warn-text); }
+.btn-primary.warn { background: var(--warn); }
+.btn-text.small { font-size: 13px; padding: 0 8px; }
+.footer.tight { position: static; padding-bottom: 8px; }
+fieldset.plain { margin: 0; padding: 0; min-width: 0; }
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+dialog.sheet { max-height: 90dvh; overflow-y: auto; }

@@ -28,6 +28,8 @@ Ditandai: **[pasti]** = disebut langsung oleh pemilik; **[asumsi]** = tafsiran s
 - **[pasti]** Setiap penarikan dicatat sebagai utang ke rekening itu (`emergency_debt`), sebagai pengingat bahwa bulan tersebut kelebihan belanja. Dilunasi saat gajian.
 - **[pasti]** Tidak pernah berutang ke orang lain. Entri "utang" di catatan lama (misalnya octo, permata) hanya pelunasan ke tabungan sendiri.
 - Penarikan dibuat dari layar Tambah transaksi dengan sakelar "Ambil dari rekening darurat". Pelunasan adalah transaksi transfer ke rekening darurat, lalu `emergency_debt.status` menjadi `paid`.
+- "Catat pelunasan" di layar Rekening darurat: pilih utang (default semua yang belum lunas), rekening asal, dan tanggal. Satu transfer melunasi semua utang terpilih.
+- Pelunasan bisa dibatalkan dari layar itu: utang kembali belum lunas dan transfernya dihapus lunak. Transfer pelunasan tidak bisa dihapus dari daftar transaksi biasa.
 
 ### Transfer, tabungan, investasi
 - **[pasti]** Transfer ke rekening sendiri bukan pengeluaran dan bukan tabungan baru (`kind = 'transfer'`).

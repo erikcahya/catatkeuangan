@@ -352,3 +352,57 @@ test('tagihan tiap 28 hari dihitung dari pembayaran terakhir', { skip }, async (
       where o.bill_id = $1 and o.status = 'pending'`, [wifiId])).rows;
   assert.ok(after.every((o) => o.start_date === m.cycle.start), JSON.stringify(after));
 });
+
+test('rekening darurat: lunasi beberapa utang sekaligus, lalu batalkan', { skip }, async () => {
+  const m = (await app.inject({ url: '/api/meta', cookies: { sid } })).json();
+  const withdraw = (amount, note) => post({ kind: 'expense', amount, trx_date: m.today, note,
+    account_id: acc['Rek. utama'], category_id: cat['Kesehatan'], from_emergency: true });
+  await withdraw(300000, 'Obat');
+  await withdraw(200000, 'Dokter');
+  const get = async () => (await app.inject({ url: '/api/emergency', cookies: { sid } })).json();
+
+  let e = await get();
+  const before = e.open_debt;
+  const mine = e.open.filter((d) => ['Obat', 'Dokter'].includes(d.note));
+  assert.equal(mine.length, 2);
+  assert.equal(e.filled, 10000000 - before);
+  assert.equal(mine[0].recorded_by, 'Erik');
+
+  // Dari rekening darurat sendiri ditolak.
+  const self = await app.inject({ method: 'POST', url: '/api/emergency/repay', cookies: { sid },
+    payload: { debt_ids: mine.map((d) => d.id), account_id: acc['Rekening darurat'], trx_date: m.today } });
+  assert.equal(self.statusCode, 400);
+
+  const r = await app.inject({ method: 'POST', url: '/api/emergency/repay', cookies: { sid },
+    payload: { debt_ids: mine.map((d) => d.id), account_id: acc['Rek. utama'], trx_date: m.today } });
+  assert.equal(r.statusCode, 201, r.body);
+  assert.deepEqual({ amount: r.json().amount, count: r.json().count }, { amount: 500000, count: 2 });
+  const t = (await pool.query('select kind, account_id, to_account_id, amount from trx where id = $1', [r.json().trx_id])).rows[0];
+  assert.deepEqual(t, { kind: 'transfer', account_id: acc['Rek. utama'], to_account_id: acc['Rekening darurat'], amount: 500000 });
+
+  e = await get();
+  assert.equal(e.open_debt, before - 500000);
+  const g = e.repayments.find((x) => x.trx_id === r.json().trx_id);
+  assert.equal(g.amount, 500000);
+  assert.equal(g.debts.length, 2);
+
+  // Dilunasi dua kali ditolak.
+  const again = await app.inject({ method: 'POST', url: '/api/emergency/repay', cookies: { sid },
+    payload: { debt_ids: [mine[0].id], account_id: acc['Rek. utama'], trx_date: m.today } });
+  assert.equal(again.statusCode, 409);
+
+  // Transfer pelunasan tidak bisa dihapus dari daftar transaksi biasa; penarikannya juga tidak.
+  assert.equal((await app.inject({ method: 'DELETE', url: `/api/trx/${r.json().trx_id}`, cookies: { sid } })).statusCode, 409);
+
+  // Pelunasan tidak menambah pengeluaran siklus (transfer).
+  const s = (await app.inject({ url: '/api/summary', cookies: { sid } })).json();
+  assert.equal(s.emergency.open_debt, before - 500000);
+
+  // Batalkan -> utang kembali terbuka.
+  const undo = await app.inject({ method: 'DELETE', url: `/api/emergency/repayments/${r.json().trx_id}`, cookies: { sid } });
+  assert.equal(undo.statusCode, 200);
+  e = await get();
+  assert.equal(e.open_debt, before);
+  assert.ok(!e.repayments.some((x) => x.trx_id === r.json().trx_id));
+  assert.ok((await pool.query('select deleted_at from trx where id = $1', [r.json().trx_id])).rows[0].deleted_at);
+});
