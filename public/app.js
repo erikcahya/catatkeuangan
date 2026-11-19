@@ -258,7 +258,7 @@ async function renderHome() {
       <div class="topbar">
         <div><div class="eyebrow">Siklus gajian</div><h1 class="title">${esc(s.cycle.label)}</h1></div>
         <div class="topbar-actions">
-          <button class="avatar" id="logout" aria-label="Keluar (login sebagai ${esc(m.user.name)})" title="Keluar">${esc(m.user.name[0] ?? '?')}</button>
+          <a class="avatar" href="#/anggota" aria-label="Anggota keluarga, login sebagai ${esc(m.user.name)}">${esc(m.user.name[0] ?? '?')}</a>
           ${cyclePicker}
         </div>
       </div>
@@ -280,13 +280,6 @@ async function renderHome() {
   document.getElementById('cycle-select')?.addEventListener('change', (e) => {
     selectedCycle = e.target.value === m.cycle.start ? null : e.target.value;
     renderHome();
-  });
-  document.getElementById('logout').addEventListener('click', async () => {
-    if (!confirm(`Keluar dari akun ${m.user.name}?`)) return;
-    await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
-    meta = null;
-    selectedCycle = null;
-    location.hash = '#/login';
   });
   app.querySelectorAll('[data-del]').forEach((btn) => btn.addEventListener('click', async () => {
     if (!confirm('Hapus transaksi ini?')) return;
@@ -1235,6 +1228,181 @@ async function renderTransactions() {
   await load();
 }
 
+// ---------- Layar 7: anggota keluarga ----------
+
+const ROLE_LABEL = { suami: 'Suami', istri: 'Istri', anak: 'Anak' };
+
+function permChips(member) {
+  const ok = (t) => `<span class="perm">${t}</span>`;
+  return member.can_view_reports
+    ? ok('Catat') + ok('Lihat laporan') + ok('Ubah dan hapus')
+    : ok('Catat') + ok('Ubah dan hapus') + '<span class="perm off">Tanpa laporan dan saldo</span>';
+}
+
+async function renderMembers() {
+  await loadMeta();
+  const d = await api('/api/members');
+
+  const card = (x) => `<section class="card member" aria-label="${esc(x.name)}">
+    <div class="daily-head">
+      <span class="member-name">${esc(x.name)}</span>
+      ${x.id === d.me ? '<span class="in tiny">Akun yang login</span>' : ''}
+    </div>
+    <span class="tile-label">${ROLE_LABEL[x.role]}${x.has_login
+      ? (x.email ? ` · ${esc(x.email)}` : '')
+      : ' · <span class="warn-text tiny">belum punya login</span>'}</span>
+    <div class="perms">${permChips(x)}</div>
+    ${d.can_manage ? `<a class="btn-text small member-edit" href="#/anggota/${esc(x.id)}">Atur</a>` : ''}
+  </section>`;
+
+  app.innerHTML = `<div class="screen">
+    <div class="screen-body">
+      ${backHeader('Pengaturan', 'Anggota keluarga')}
+      <p class="rules-text">Semua anggota saling melihat transaksi, dan tiap transaksi menampilkan siapa yang mencatat.</p>
+      ${d.members.map(card).join('')}
+      <section class="emergency-hero small-note">
+        <span class="daily-title">Jejak perubahan</span>
+        <span class="rules-text">Karena semua bisa mengubah dan menghapus, tiap transaksi menyimpan pencatat awal dan pengubah terakhir.</span>
+      </section>
+      <div class="card rows">
+        <a class="row link-row" href="#/anggota/${esc(d.me)}/sandi"><span>Ganti kata sandi saya</span>${ICON.next}</a>
+        <button type="button" class="row link-row as-button danger-row" id="logout"><span>Keluar</span></button>
+      </div>
+    </div>
+    ${d.can_manage ? '<div class="footer"><a class="btn-outline" href="#/anggota/baru">Tambah anggota</a></div>' : ''}
+  </div>`;
+
+  document.getElementById('logout').addEventListener('click', async () => {
+    if (!confirm(`Keluar dari akun ${meta.user.name}?`)) return;
+    await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    meta = null;
+    selectedCycle = null;
+    trxFilter = null;
+    location.hash = '#/login';
+  });
+}
+
+/** Tambah atau atur anggota (hanya suami/istri). id = null untuk anggota baru. */
+async function renderMemberForm(id) {
+  await loadMeta();
+  const d = await api('/api/members');
+  if (!d.can_manage) { location.hash = '#/anggota'; return; }
+  const x = id ? d.members.find((mm) => mm.id === id) : null;
+  if (id && !x) throw new Error('Anggota tidak ditemukan.');
+  const v = x ?? { name: '', role: 'anak', email: '', has_login: false };
+
+  app.innerHTML = `<form class="screen" id="member-form" novalidate>
+    <div class="screen-body">
+      ${backHeader('Anggota keluarga', x ? `Atur ${x.name}` : 'Tambah anggota', '#/anggota')}
+      <div id="m-err" class="error" hidden></div>
+      <div class="card field">
+        <label for="m-name">Nama</label>
+        <input id="m-name" maxlength="60" autocomplete="off" value="${esc(v.name)}">
+      </div>
+      <div class="card rows">
+        <div class="row">
+          <label for="m-role">Peran</label>
+          <select id="m-role">${Object.entries(ROLE_LABEL).map(([k, l]) => `<option value="${k}"${k === v.role ? ' selected' : ''}>${l}</option>`).join('')}</select>
+        </div>
+      </div>
+      <p class="tile-label" id="m-role-hint"></p>
+      <div class="card field">
+        <label for="m-email">Email untuk login</label>
+        <input id="m-email" type="email" autocomplete="off" inputmode="email" value="${esc(v.email ?? '')}" placeholder="nama@contoh.com">
+      </div>
+      ${x?.id === d.me
+        ? `<a class="card row link-row" href="#/anggota/${esc(d.me)}/sandi"><span>Ganti kata sandi saya</span>${ICON.next}</a>`
+        : `<div class="card field">
+        <label for="m-pass">${v.has_login ? 'Kata sandi baru (kosongkan bila tidak diganti)' : 'Kata sandi (minimal 8 karakter)'}</label>
+        <input id="m-pass" type="password" autocomplete="new-password">
+      </div>`}
+      <p class="tile-label">Beri tahu email dan kata sandi ini ke anggotanya. Mereka bisa menggantinya sendiri setelah masuk.
+        Kosongkan email bila anggota ini tidak perlu login.</p>
+    </div>
+    <div class="footer"><button class="btn-primary" type="submit">${x ? 'Simpan' : 'Tambah anggota'}</button></div>
+  </form>`;
+
+  const f = document.getElementById('member-form');
+  const err = document.getElementById('m-err');
+  const role = f.querySelector('#m-role');
+  const hint = f.querySelector('#m-role-hint');
+  const syncHint = () => {
+    hint.textContent = role.value === 'anak'
+      ? 'Anak bisa mencatat, mengubah, dan menghapus transaksi, tetapi tidak melihat laporan, saldo, rekening darurat, dan tabungan.'
+      : 'Suami dan istri bisa melihat semua dan mengatur anggota.';
+  };
+  role.addEventListener('change', syncHint);
+  syncHint();
+  if (!x) f.querySelector('#m-name').focus();
+
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fail = (msg, el) => { err.textContent = msg; err.hidden = false; el?.focus(); };
+    const name = f.querySelector('#m-name').value.trim();
+    const email = f.querySelector('#m-email').value.trim() || null;
+    const password = f.querySelector('#m-pass')?.value ?? '';
+    if (!name) return fail('Isi namanya.', f.querySelector('#m-name'));
+    if (password && password.length < 8) return fail('Kata sandi minimal 8 karakter.', f.querySelector('#m-pass'));
+    if (password && !email) return fail('Isi email dulu supaya kata sandi bisa dipakai login.', f.querySelector('#m-email'));
+    const btn = f.querySelector('[type="submit"]');
+    btn.disabled = true;
+    try {
+      const body = { name, role: role.value, email };
+      let memberId = x?.id;
+      if (x) await api(`/api/members/${x.id}`, { method: 'PUT', body });
+      else memberId = (await api('/api/members', { method: 'POST', body })).id;
+      if (password) await api(`/api/members/${memberId}/password`, { method: 'PUT', body: { password } });
+      meta = null; // nama/peran sendiri bisa berubah
+      toast(x ? 'Anggota diperbarui.' : `${name} ditambahkan.`);
+      location.hash = '#/anggota';
+    } catch (ex) {
+      btn.disabled = false;
+      fail(ex.message);
+    }
+  });
+}
+
+/** Ganti kata sandi sendiri. */
+async function renderOwnPassword() {
+  const m = await loadMeta();
+  app.innerHTML = `<form class="screen" id="pw-form" novalidate>
+    <div class="screen-body">
+      ${backHeader('Anggota keluarga', 'Ganti kata sandi', '#/anggota')}
+      <div id="pw-err" class="error" hidden></div>
+      <input type="text" autocomplete="username" value="${esc(m.user.name)}" hidden>
+      <div class="card field"><label for="pw-old">Kata sandi lama</label>
+        <input id="pw-old" type="password" autocomplete="current-password"></div>
+      <div class="card field"><label for="pw-new">Kata sandi baru (minimal 8 karakter)</label>
+        <input id="pw-new" type="password" autocomplete="new-password"></div>
+      <div class="card field"><label for="pw-new2">Ulangi kata sandi baru</label>
+        <input id="pw-new2" type="password" autocomplete="new-password"></div>
+      <p class="tile-label">Perangkat lain yang sedang masuk dengan akun ini akan diminta login ulang.</p>
+    </div>
+    <div class="footer"><button class="btn-primary" type="submit">Simpan kata sandi</button></div>
+  </form>`;
+  const f = document.getElementById('pw-form');
+  const err = document.getElementById('pw-err');
+  f.querySelector('#pw-old').focus();
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fail = (msg, el) => { err.textContent = msg; err.hidden = false; el?.focus(); };
+    const oldPw = f.querySelector('#pw-old').value;
+    const pw = f.querySelector('#pw-new').value;
+    if (pw.length < 8) return fail('Kata sandi baru minimal 8 karakter.', f.querySelector('#pw-new'));
+    if (pw !== f.querySelector('#pw-new2').value) return fail('Kata sandi baru tidak sama.', f.querySelector('#pw-new2'));
+    const btn = f.querySelector('[type="submit"]');
+    btn.disabled = true;
+    try {
+      await api(`/api/members/${m.user.id}/password`, { method: 'PUT', body: { password: pw, current_password: oldPw } });
+      toast('Kata sandi diganti.');
+      location.hash = '#/anggota';
+    } catch (ex) {
+      btn.disabled = false;
+      fail(ex.message);
+    }
+  });
+}
+
 // ---------- Router ----------
 
 const routes = [
@@ -1245,6 +1413,10 @@ const routes = [
   [/^#\/laporan$/, renderReport],
   [/^#\/laporan\/kategori\/([0-9a-f-]{36})$/, (id) => renderCategory(id)],
   [/^#\/transaksi$/, renderTransactions],
+  [/^#\/anggota$/, renderMembers],
+  [/^#\/anggota\/baru$/, () => renderMemberForm(null)],
+  [/^#\/anggota\/[0-9a-f-]{36}\/sandi$/, renderOwnPassword],
+  [/^#\/anggota\/([0-9a-f-]{36})$/, (id) => renderMemberForm(id)],
   [/^#\/tabungan$/, renderSavings],
   [/^#\/tabungan\/setor$/, renderDeposit],
   [/^#\/tagihan$/, renderBills],

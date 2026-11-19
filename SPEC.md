@@ -63,6 +63,7 @@ Ditandai: **[pasti]** = disebut langsung oleh pemilik; **[asumsi]** = tafsiran s
 - **[pasti]** Anak hanya boleh mencatat. Mengubah dan menghapus boleh untuk semua anggota.
 - **[asumsi]** Anak tidak melihat laporan, saldo, rekening darurat, dan tabungan (`can_view_reports = false`). Anak melihat daftar transaksi agar bisa mengubah dan menghapus.
 - Penghapusan bersifat lunak (`deleted_at`). Pengubahan mengisi `updated_by` dan `updated_at`.
+- **[asumsi]** Hanya suami/istri yang bisa menambah anggota, mengubah peran, dan mengatur email/kata sandi anggota lain. Harus selalu ada minimal satu suami atau istri. Setiap anggota bisa mengganti kata sandinya sendiri (dengan kata sandi lama). Email anggota lain tidak ditampilkan ke anak.
 
 ### Kategori
 - 19 kategori pengeluaran dan 4 pemasukan, lihat `db/migrations/002_seed.sql`. Struktur induk dan sub-kategori didukung (`parent_id`) tetapi belum dipakai.
@@ -93,5 +94,5 @@ Catatan lama punya kolom: tanggal, kategori, keterangan, sumber, jumlah (bertand
 - Pencatat transaksi lama: tetapkan ke satu pengguna tetap, karena data lama tidak mencatatnya.
 
 ## Belum diputuskan
-- Alur mengundang anggota dari aplikasi. Untuk sekarang login diatur lewat `npm run set-login`.
+- Undangan lewat email (butuh layanan pengirim email). Untuk sekarang suami/istri menambah anggota dan mengatur email + kata sandinya di layar Anggota keluarga; `npm run set-login` tetap ada untuk akun pertama.
 - Layar pengaturan batas budget harian.

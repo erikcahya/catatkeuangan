@@ -499,3 +499,61 @@ test('daftar transaksi per rentang tanggal', { skip }, async () => {
   assert.equal((await get('from=2026-11-20&to=2026-11-10')).statusCode, 400);
   assert.equal((await get('from=2026-02-30')).statusCode, 400);
 });
+
+test('anggota: tambah, atur login, izin, ganti kata sandi sendiri', { skip }, async () => {
+  const as = (token) => ({ cookies: { sid: token } });
+  const login = (email, password) => app.inject({ method: 'POST', url: '/api/auth/login', payload: { email, password } });
+
+  let list = (await app.inject({ url: '/api/members', ...as(sid) })).json();
+  assert.equal(list.can_manage, true);
+  assert.equal(list.members[0].role, 'suami');
+
+  // Tambah anggota baru, atur login, lalu masuk.
+  const add = await app.inject({ method: 'POST', url: '/api/members', ...as(sid),
+    payload: { name: 'Nenek', role: 'istri', email: 'Nenek@Tes.Local' } });
+  assert.equal(add.statusCode, 201, add.body);
+  const nenekId = add.json().id;
+  const dup = await app.inject({ method: 'POST', url: '/api/members', ...as(sid),
+    payload: { name: 'X', role: 'anak', email: 'nenek@tes.local' } });
+  assert.equal(dup.statusCode, 409);
+  const setPw = await app.inject({ method: 'PUT', url: `/api/members/${nenekId}/password`, ...as(sid),
+    payload: { password: 'sandi-nenek-123' } });
+  assert.equal(setPw.statusCode, 200, setPw.body);
+  assert.equal((await login('nenek@tes.local', 'sandi-nenek-123')).statusCode, 200);
+
+  // Ubah jadi anak -> tidak bisa lihat laporan.
+  const put = await app.inject({ method: 'PUT', url: `/api/members/${nenekId}`, ...as(sid),
+    payload: { name: 'Nenek', role: 'anak', email: 'nenek@tes.local' } });
+  assert.equal(put.statusCode, 200);
+  const nenekLogin = await login('nenek@tes.local', 'sandi-nenek-123');
+  const nsid = nenekLogin.cookies.find((c) => c.name === 'sid').value;
+  assert.equal((await app.inject({ url: '/api/report', ...as(nsid) })).statusCode, 403);
+
+  // Anak tidak bisa mengatur anggota lain, tapi bisa ganti kata sandinya sendiri.
+  list = (await app.inject({ url: '/api/members', ...as(nsid) })).json();
+  assert.equal(list.can_manage, false);
+  assert.ok(list.members.filter((x) => x.id !== nenekId).every((x) => x.email === null)); // email orang lain tersembunyi
+  assert.equal((await app.inject({ method: 'POST', url: '/api/members', ...as(nsid), payload: { name: 'Y', role: 'anak' } })).statusCode, 403);
+  assert.equal((await app.inject({ method: 'PUT', url: `/api/members/${erik.id}/password`, ...as(nsid), payload: { password: 'xxxxxxxx' } })).statusCode, 403);
+  const wrongOld = await app.inject({ method: 'PUT', url: `/api/members/${nenekId}/password`, ...as(nsid),
+    payload: { password: 'sandi-baru-456', current_password: 'salah' } });
+  assert.equal(wrongOld.statusCode, 400);
+  const own = await app.inject({ method: 'PUT', url: `/api/members/${nenekId}/password`, ...as(nsid),
+    payload: { password: 'sandi-baru-456', current_password: 'sandi-nenek-123' } });
+  assert.equal(own.statusCode, 200, own.body);
+  assert.equal((await app.inject({ url: '/api/members', ...as(nsid) })).statusCode, 200); // sesi sendiri tetap
+  assert.equal((await login('nenek@tes.local', 'sandi-baru-456')).statusCode, 200);
+
+  // Email dihapus -> sesi dicabut.
+  await app.inject({ method: 'PUT', url: `/api/members/${nenekId}`, ...as(sid), payload: { name: 'Nenek', role: 'anak', email: null } });
+  assert.equal((await app.inject({ url: '/api/members', ...as(nsid) })).statusCode, 401);
+
+  // Minimal satu suami/istri.
+  await pool.query(`update app_user set role = 'anak', can_view_reports = false where name = 'Istri'`);
+  const last = await app.inject({ method: 'PUT', url: `/api/members/${erik.id}`, ...as(sid),
+    payload: { name: 'Erik', role: 'anak', email: 'erik@tes.local' } });
+  assert.equal(last.statusCode, 409);
+  await pool.query(`update app_user set role = 'istri', can_view_reports = true where name = 'Istri'`);
+  await pool.query(`delete from session where user_id = $1`, [nenekId]);
+  await pool.query(`delete from app_user where id = $1`, [nenekId]);
+});

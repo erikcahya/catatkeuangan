@@ -368,3 +368,15 @@ a.cat-head { text-decoration: none; }
   border-radius: 18px; border: 1px solid var(--primary); background: #E4F1EE; color: var(--primary);
   font-size: 13px; font-weight: 600; cursor: pointer;
 }
+
+/* ---------- Anggota keluarga ---------- */
+a.avatar { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.member { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.member-name { font-size: 15px; font-weight: 600; }
+.perms { display: flex; flex-wrap: wrap; gap: 6px; }
+.perm { font-size: 12px; font-weight: 500; padding: 6px 10px; border-radius: 14px; background: #DDEFE9; color: #0B4A40; }
+.perm.off { background: #ECE9E0; color: var(--muted-strong); }
+.member-edit { align-self: flex-start; padding: 0; min-height: 32px; }
+.small-note { padding: 12px 14px; gap: 4px; border-radius: var(--radius); }
+.link-row { color: var(--text); text-decoration: none; }
+.danger-row { color: var(--danger); font-weight: 500; border-bottom: none; }

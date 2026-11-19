@@ -11,6 +11,7 @@ import billRoutes from './routes/bills.js';
 import emergencyRoutes from './routes/emergency.js';
 import savingsRoutes from './routes/savings.js';
 import reportRoutes from './routes/report.js';
+import memberRoutes from './routes/members.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
 const OPEN_ROUTES = new Set(['/api/auth/login']);
@@ -50,6 +51,7 @@ export function buildApp({ pool, logger = true } = {}) {
   app.register(emergencyRoutes);
   app.register(savingsRoutes);
   app.register(reportRoutes);
+  app.register(memberRoutes);
 
   app.setErrorHandler((err, req, reply) => {
     // Pelanggaran constraint database = input salah, bukan kesalahan server.
