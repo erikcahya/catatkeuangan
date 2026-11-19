@@ -444,3 +444,35 @@ test('tabungan: setoran per aset, nilai sekarang manual', { skip }, async () => 
   // Bukan rekening aset ditolak.
   assert.equal((await put(acc['Rek. utama'], 1)).statusCode, 404);
 });
+
+test('laporan siklus: per kategori, transfer tidak dihitung, anggaran bila ada', { skip }, async () => {
+  const start = '2026-10-25';
+  const get = async () => (await app.inject({ url: `/api/report?cycle=${start}`, cookies: { sid } })).json();
+  const r = await get();
+  const s = (await app.inject({ url: `/api/summary?cycle=${start}`, cookies: { sid } })).json();
+  assert.deepEqual(r.totals, s.totals); // sama dengan Beranda
+  assert.equal(r.totals.expense, r.expense_by_category.reduce((a, c) => a + c.total, 0));
+  const makan = r.expense_by_category.find((c) => c.name === 'Makan dan Minum');
+  assert.equal(makan.total, 560000);
+  assert.equal(makan.count, 3);
+  assert.equal(makan.budget, null);
+  assert.ok(r.income_by_category.some((c) => c.name === 'Gaji'));
+  // Urut dari terbesar.
+  const totals = r.expense_by_category.map((c) => c.total);
+  assert.deepEqual(totals, [...totals].sort((a, b) => b - a));
+  assert.ok(r.extra.saved >= 500000);
+
+  // Anggaran per kategori bila ada.
+  const pc = (await pool.query(`select id from pay_cycle where start_date = $1`, [start])).rows[0];
+  await pool.query('insert into budget (cycle_id, category_id, limit_amount) values ($1, $2, 6000000)', [pc.id, cat['Makan dan Minum']]);
+  await pool.query('insert into budget (cycle_id, category_id, limit_amount) values ($1, $2, 1000000)', [pc.id, cat['Olahraga']]);
+  const r2 = await get();
+  assert.equal(r2.expense_by_category.find((c) => c.name === 'Makan dan Minum').budget, 6000000);
+  const olahraga = r2.expense_by_category.find((c) => c.name === 'Olahraga');
+  assert.deepEqual([olahraga.total, olahraga.budget], [0, 1000000]); // anggaran tanpa pengeluaran tetap tampil
+
+  // Rincian per kategori.
+  const list = (await app.inject({ url: `/api/trx?cycle=${start}&category_id=${cat['Makan dan Minum']}&limit=200`, cookies: { sid } })).json();
+  assert.equal(list.items.length, 3);
+  assert.ok(list.items.every((t) => t.category_name === 'Makan dan Minum'));
+});

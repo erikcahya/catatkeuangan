@@ -34,3 +34,23 @@ test('tanggalPendek dan selisihHari', () => {
   assert.equal(selisihHari('2026-12-30', '2027-01-02'), 3);
   assert.equal(selisihHari('2026-11-16', '2026-11-10'), -6);
 });
+
+import { rupiahSingkat } from '../public/format.js';
+
+test('rupiahSingkat seperti di desain laporan', () => {
+  assert.equal(rupiahSingkat(25000000), 'Rp 25 jt');
+  assert.equal(rupiahSingkat(15550000), 'Rp 15,6 jt');
+  assert.equal(rupiahSingkat(9450000), 'Rp 9,5 jt');
+  assert.equal(rupiahSingkat(450000), 'Rp 450 rb');
+  assert.equal(rupiahSingkat(1250000000), 'Rp 1,3 M');
+  assert.equal(rupiahSingkat(500), 'Rp 500');
+  assert.equal(rupiahSingkat(-2000000), 'Rp 2 jt');
+});
+
+import { siklusTerakhir, labelSiklus } from '../public/format.js';
+
+test('siklusTerakhir dan labelSiklus', () => {
+  assert.deepEqual(siklusTerakhir('2026-01-25', 3), ['2026-01-25', '2025-12-25', '2025-11-25']);
+  assert.equal(labelSiklus('2026-11-25'), '25 Nov – 24 Des');
+  assert.equal(labelSiklus('2026-12-25'), '25 Des – 24 Jan');
+});
