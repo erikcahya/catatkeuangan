@@ -354,8 +354,11 @@ dialog.sheet { max-height: 90dvh; overflow-y: auto; }
 .cat-track { display: block; height: 8px; border-radius: 4px; background: var(--track); overflow: hidden; }
 .cat-track > span { display: block; height: 100%; background: var(--primary); }
 .cat-track > span.over { background: var(--danger); }
-.cat-items { padding-left: 4px; }
 .facts .row { min-height: 44px; }
 .date-head { font-size: 13px; font-weight: 600; color: var(--muted); margin: 6px 0 0; }
-.btn-text.more { align-self: flex-start; padding: 0; }
-.more-note { padding: 8px 0; }
+a.cat-head { text-decoration: none; }
+.cat-right { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+.cat-line.link { color: var(--text); min-height: 44px; align-items: center; }
+.cat-line.link:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+.date-row { display: flex; justify-content: space-between; align-items: baseline; margin-top: 6px; }
+.date-row .date-head { margin: 0; }
