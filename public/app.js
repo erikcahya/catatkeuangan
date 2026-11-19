@@ -297,7 +297,9 @@ async function renderHome() {
 // ---------- Layar 1: tambah transaksi ----------
 
 // "Tabung" = transfer ke rekening aset (kripto, saham, emas). Di server tetap kind 'transfer'.
-const KIND_LABEL = { expense: 'Pengeluaran', income: 'Pemasukan', transfer: 'Transfer', saving: 'Tabung' };
+// Pilihan "Transfer" antar rekening biasa sengaja tidak ditampilkan (keputusan pemilik, 19 Nov 2026);
+// transfer tetap dipakai di balik layar untuk Tabung, pelunasan darurat, dan impor.
+const KIND_LABEL = { expense: 'Pengeluaran', income: 'Pemasukan', saving: 'Tabung' };
 
 /**
  * @param preset  { kind, toAccountId, title, back } — dipakai mis. oleh tombol "Tabung"
@@ -322,7 +324,7 @@ async function renderAdd(preset = {}) {
         <h1 class="title">${esc(preset.title ?? 'Tambah transaksi')}</h1>
         <a class="icon-btn" href="${back}" aria-label="Tutup">${ICON.close}</a>
       </div>
-      <div class="segmented${kinds.length === 4 ? ' four' : ''}" role="group" aria-label="Jenis transaksi">
+      <div class="segmented${kinds.length === 2 ? ' two' : ''}" role="group" aria-label="Jenis transaksi">
         ${kinds.map(([k, label]) =>
           `<button type="button" data-kind="${k}" aria-pressed="${k === state.kind}">${label}</button>`).join('')}
       </div>

@@ -324,7 +324,3 @@ dialog.sheet { max-height: 90dvh; overflow-y: auto; }
 .as-button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .trx-item .main.end { align-items: flex-end; text-align: right; }
 .btn-primary.as-link { display: flex; align-items: center; justify-content: center; }
-
-/* Empat jenis transaksi (dengan Tabung) */
-.segmented.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.segmented.four button { font-size: 13px; padding: 0 2px; }
