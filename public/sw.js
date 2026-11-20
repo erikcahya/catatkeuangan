@@ -1,7 +1,7 @@
 // Service worker: simpan kerangka aplikasi agar bisa dibuka cepat dan dipasang dari ponsel.
 // Permintaan /api/* selalu ke jaringan (data keuangan tidak disimpan di cache).
 // Naikkan VERSION setiap kali berkas di public/ berubah.
-const VERSION = 'v24';
+const VERSION = 'v25';
 const CACHE = `shell-${VERSION}`;
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/format.js', '/icons.js', '/picker.js', '/manifest.webmanifest', '/icon.svg'];
 

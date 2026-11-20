@@ -415,7 +415,7 @@ async function renderAdd(preset = {}) {
       </div>
       <div class="card rows" id="expense-toggles">
         <label class="row toggle">
-          <span>Pengeluaran sekali bayar</span>
+          <span>Pengeluaran besar</span>
           <input type="checkbox" name="is_one_off">
         </label>
         ${emergency && !edit ? `<label class="row toggle emergency">
@@ -1145,7 +1145,7 @@ async function renderReport() {
       <div class="card rows facts">
         <div class="row"><span class="label">Ditabung</span><span class="value">${rupiah(r.extra.saved)}</span></div>
         <div class="row"><span class="label">Diambil dari rekening darurat</span><span class="value">${rupiah(r.extra.from_emergency)}</span></div>
-        <div class="row"><span class="label">Pengeluaran sekali bayar</span><span class="value">${rupiah(r.extra.one_off)}</span></div>
+        <div class="row"><span class="label">Pengeluaran besar</span><span class="value">${rupiah(r.extra.one_off)}</span></div>
       </div>
       <a class="see-all start" href="#/cek-saldo">Cek saldo: cari catatan yang terlewat</a>
       <p class="tile-label">Tabung dan pelunasan rekening darurat tidak dihitung sebagai pengeluaran. Penarikan rekening darurat termasuk pengeluaran. Tekan kategori untuk melihat semua transaksinya.</p>

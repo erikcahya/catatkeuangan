@@ -66,7 +66,7 @@ Ditandai: **[pasti]** = disebut langsung oleh pemilik; **[asumsi]** = tafsiran s
 - **[pasti]** Anak hanya boleh mencatat. Mengubah dan menghapus boleh untuk semua anggota.
 - **[asumsi]** Anak tidak melihat laporan, saldo, rekening darurat, dan tabungan (`can_view_reports = false`). Anak melihat daftar transaksi agar bisa mengubah dan menghapus.
 - Penghapusan bersifat lunak (`deleted_at`). Pengubahan mengisi `updated_by` dan `updated_at`.
-- **Ubah transaksi** (menekan baris transaksi): jumlah, tanggal, kategori, rekening, catatan, dan tanda sekali bayar bisa diubah; jenis boleh pindah antara Pengeluaran, Pemasukan, dan Tabung. Siklus dihitung ulang dari tanggal baru (gaji tetap ke siklus gajian terdekat).
+- **Ubah transaksi** (menekan baris transaksi): jumlah, tanggal, kategori, rekening, catatan, dan tanda "Pengeluaran besar" (sebelumnya "sekali bayar") bisa diubah; jenis boleh pindah antara Pengeluaran, Pemasukan, dan Tabung. Siklus dihitung ulang dari tanggal baru (gaji tetap ke siklus gajian terdekat).
 - Penarikan rekening darurat dan pembayaran tagihan terkunci jenisnya; penarikan juga terkunci rekeningnya dan mengubah jumlahnya ikut mengubah utang yang terbuka. Jumlah penarikan yang utangnya sudah lunas terkunci. Transfer pelunasan utang darurat tidak bisa diubah dari daftar transaksi (batalkan di layar Rekening darurat).
 - **[asumsi]** Hanya suami/istri yang bisa menambah anggota, mengubah peran, dan mengatur email/kata sandi anggota lain. Harus selalu ada minimal satu suami atau istri. Setiap anggota bisa mengganti kata sandinya sendiri (dengan kata sandi lama). Email anggota lain tidak ditampilkan ke anak.
 
