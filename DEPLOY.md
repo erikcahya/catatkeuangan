@@ -86,10 +86,13 @@ sudo cp deploy/nginx-proxy.conf /etc/nginx/snippets/catatkeuangan-proxy.conf
 sudo cp deploy/nginx.conf /etc/nginx/sites-available/catatkeuangan
 sudo nano /etc/nginx/sites-available/catatkeuangan          # ganti server_name dengan domain Anda
 sudo ln -s /etc/nginx/sites-available/catatkeuangan /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d keuangan.contoh.com                  # pilih opsi redirect HTTP ke HTTPS
 ```
+
+Bila VPS sudah menayangkan situs lain, **pakai subdomain** (mis. `keuangan.domainanda.com`, dengan record A
+ke IP VPS) dan jangan menghapus atau mengubah konfigurasi situs lain di `sites-enabled`. Konfigurasi ini hanya
+menangani `server_name` miliknya sendiri. Selalu jalankan `sudo nginx -t` sebelum `reload`.
 
 Percobaan login dibatasi 5 per menit per alamat IP. Setelah HTTPS aktif, boleh menambahkan di blok `server`
 yang dikelola certbot: `add_header Strict-Transport-Security "max-age=31536000" always;`
