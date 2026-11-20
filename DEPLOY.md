@@ -39,9 +39,11 @@ privat, `git clone` butuh login: pakai `gh auth login`, atau deploy key / person
 
 **Bawa data lokal** (transaksi, hasil impor, anggota, tagihan, termasuk kata sandi login yang sudah diatur):
 
-Di komputer Anda (PowerShell atau Git Bash), kata sandi Postgres lokal akan ditanya:
+**Langkah ini dijalankan di komputer Anda (bukan di VPS)**, di PowerShell atau Git Bash. Kata sandi Postgres
+lokal akan ditanya. Buat dump di folder **di luar project** (repo ini publik; berkas itu berisi seluruh data keuangan):
 
 ```sh
+cd ~                                         # folder rumah Anda, bukan folder project
 pg_dump -h localhost -U postgres -Fc catatkeuangan -f catatkeuangan.dump
 scp catatkeuangan.dump USER@IP_VPS:/tmp/
 ```
@@ -50,7 +52,9 @@ Di VPS, pulihkan ke database yang masih kosong **sebelum** aplikasi dijalankan:
 
 ```sh
 cd /opt/catatkeuangan
-docker compose up -d db                      # tunggu ~10 detik sampai sehat: docker compose ps
+docker compose up -d db
+until docker compose exec -T db pg_isready -U catatkeuangan -d catatkeuangan; do sleep 2; done   # tunggu database siap
+ls -l /tmp/catatkeuangan.dump                # pastikan berkas dump sudah ada di VPS
 docker compose exec -T db pg_restore -U catatkeuangan -d catatkeuangan --no-owner --no-acl < /tmp/catatkeuangan.dump
 docker compose exec db psql -U catatkeuangan -d catatkeuangan -c "select count(*) from trx"
 shred -u /tmp/catatkeuangan.dump             # berkas itu berisi seluruh data keuangan; hapus juga di komputer Anda

@@ -2,3 +2,8 @@ node_modules/
 .env
 *.log
 import/
+# Data pribadi: jangan pernah ikut commit (repo ini publik)
+*.dump
+*.csv
+*.xlsx
+*.sql.gz
