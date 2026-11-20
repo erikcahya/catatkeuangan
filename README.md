@@ -55,4 +55,4 @@ Migrasi baru: tambahkan berkas `004_....sql`. Jangan ubah berkas yang sudah dija
 
 ## Deploy
 
-`docker compose up -d --build` dengan `POSTGRES_PASSWORD` di `.env`. App mendengarkan di `127.0.0.1:3000`; pasang Nginx dengan HTTPS di depannya (cookie login hanya dikirim lewat HTTPS saat `NODE_ENV=production`).
+Langkah lengkap ke VPS (Docker Compose, Nginx, HTTPS, cadangan, membawa data lokal): [DEPLOY.md](DEPLOY.md).

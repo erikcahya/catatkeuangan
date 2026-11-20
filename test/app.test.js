@@ -13,6 +13,7 @@ function fakePool() {
   return {
     async query(sql) {
       if (sql.includes('from session s')) return { rows: [USER] };
+      if (sql === 'select 1') return { rows: [{ '?column?': 1 }] };
       throw new Error(`query tak terduga: ${sql.slice(0, 60)}`);
     },
   };
@@ -68,5 +69,20 @@ test('POST /api/trx menolak input salah sebelum menyentuh database', async () =>
   assert.equal(badDate.json().error, 'Tanggal tidak valid.');
   // Catatan: properti tambahan (mis. user_id) dibuang diam-diam oleh Fastify;
   // pencatat selalu diambil dari sesi login, bukan dari body.
+  await app.close();
+});
+
+test('/healthz terbuka tanpa login dan tidak membocorkan data', async () => {
+  const app = await make();
+  const res = await app.inject({ url: '/healthz' }); // tanpa cookie
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.json(), { ok: true });
+  await app.close();
+});
+
+test('/healthz gagal (500) bila database mati', async () => {
+  const app = buildApp({ pool: { async query() { throw new Error('db mati'); } }, logger: false });
+  await app.ready();
+  assert.equal((await app.inject({ url: '/healthz' })).statusCode, 500);
   await app.close();
 });

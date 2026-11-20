@@ -10,7 +10,7 @@ Skema: `db/migrations/001_schema.sql`. Data awal: `db/migrations/002_seed.sql`. 
 - Backend: Node.js dengan Fastify dan `pg` (node-postgres), SQL ditulis langsung tanpa ORM. Migrasi berupa berkas SQL berurutan.
 - Database: PostgreSQL 16.
 - Frontend: PWA mobile-first, lebar acuan 390 px, supaya anggota keluarga memasangnya dari ponsel.
-- Deploy: Docker Compose (app dan postgres) di belakang Nginx.
+- Deploy: Docker Compose (app dan postgres) di belakang Nginx. Panduan dan berkasnya: `DEPLOY.md`, `deploy/`. Image database memakai PostgreSQL 18 (sama dengan komputer pengembang, supaya `pg_dump` bisa dipulihkan).
 - Satu rumah tangga per instalasi. Kolom `household_id` tetap ada supaya tabel konsisten, tetapi tidak perlu multi-tenant.
 
 ## Aturan bisnis

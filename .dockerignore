@@ -1,0 +1,13 @@
+# Jangan pernah ikut ke dalam image: rahasia dan data pribadi.
+.env
+.env.*
+import/
+*.csv
+*.xlsx
+*.dump
+# Tidak perlu di image.
+node_modules/
+.git/
+test/
+deploy/
+*.md

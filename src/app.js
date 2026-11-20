@@ -55,6 +55,12 @@ export function buildApp({ pool, logger = true } = {}) {
   app.register(memberRoutes);
   app.register(budgetRoutes);
 
+  // Pemeriksaan kesehatan untuk Docker/pemantau: tanpa login dan tanpa data, hanya memastikan database hidup.
+  app.get('/healthz', async () => {
+    await pool.query('select 1');
+    return { ok: true };
+  });
+
   app.setErrorHandler((err, req, reply) => {
     // Pelanggaran constraint database = input salah, bukan kesalahan server.
     if (err.code === '23514' || err.code === '23503' || err.code === '23505' || err.code === '22P02') {
