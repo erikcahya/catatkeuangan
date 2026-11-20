@@ -86,3 +86,18 @@ test('/healthz gagal (500) bila database mati', async () => {
   assert.equal((await app.inject({ url: '/healthz' })).statusCode, 500);
   await app.close();
 });
+
+test('berkas statis tidak bisa dibaca di luar folder public', async () => {
+  const app = await make();
+  for (const url of ['/..%2fpackage.json', '/%2e%2e/package.json', '/%2e%2e%2fsrc/app.js', '/..%5cpackage.json', '/public/../package.json', '/static/../../.env']) {
+    const res = await app.inject({ url });
+    assert.doesNotMatch(res.body, /"name": "catatkeuangan"|buildApp|DATABASE_URL|POSTGRES_PASSWORD/, url);
+  }
+  // Rute API tetap dijaga walau alamatnya ditulis tidak baku.
+  for (const url of ['/api%2fmeta', '//api/meta', '/api/./meta', '/API/meta']) {
+    const res = await app.inject({ url });
+    assert.notEqual(res.statusCode, 200, url);
+    assert.doesNotMatch(res.body, /household|payday/, url);
+  }
+  await app.close();
+});
