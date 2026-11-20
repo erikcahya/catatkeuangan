@@ -73,6 +73,15 @@ Ditandai: **[pasti]** = disebut langsung oleh pemilik; **[asumsi]** = tafsiran s
 ### Kategori
 - 19 kategori pengeluaran dan 4 pemasukan, lihat `db/migrations/002_seed.sql`. Struktur induk dan sub-kategori didukung (`parent_id`) tetapi belum dipakai.
 
+### Cek saldo (mencari catatan yang terlewat)
+Pemilik sering lupa mencatat. Pengguna memasukkan uang yang benar-benar ada di sebuah rekening; aplikasi membandingkannya dengan perkiraan dari catatan.
+- Cek pertama sebuah rekening = saldo awal. Cek berikutnya: perkiraan = saldo cek sebelumnya + uang masuk tercatat - uang keluar tercatat (pemasukan dan transfer masuk, pengeluaran dan transfer keluar); selisih = saldo sebenarnya - perkiraan. Kurang = pengeluaran terlewat, lebih = pemasukan terlewat.
+- Selisih tidak disimpan; dihitung ulang dari transaksi saat dibaca, jadi mengisi catatan susulan langsung mengurangi selisih. Batas selang ditentukan tanggal transaksi dan, pada hari cek, waktu pencatatan: catatan bertanggal sebelum cek sebelumnya tidak dihitung (sudah tercermin di saldonya); catatan bertanggal hari cek yang dicatat sesudah cek dianggap terjadi sesudahnya. Setelah menambah catatan susulan di hari yang sama, tombol "Hitung ulang" memindahkan waktu cek ke sekarang (hanya cek terbaru, hari yang sama).
+- "Catat selisih" membuat satu pengeluaran kategori Lainnya (atau pemasukan Pemasukan Lainnya) berjudul "Selisih saldo (belum tercatat)", tertaut ke cek itu (`trx.balance_check_id`) supaya tidak dihitung dua kali pada cek berikutnya. Hanya untuk cek terbaru.
+- **[asumsi]** Rekening yang dicek: rekening non-aset (awalnya Rek. utama). Tabungan/aset tidak dicek (nilainya diisi manual di layar Tabungan).
+- Pengingat: jarak hari di `household.balance_check_days` (bawaan 7; pilihan 7, 14, 30 hari, atau mati). Berupa kartu di Beranda saat aplikasi dibuka (bisa "Nanti" sampai besok), belum notifikasi ke ponsel. Hanya untuk anggota yang boleh melihat laporan.
+- Reset transaksi (`scripts/reset-transactions.js`) ikut menghapus cek saldo yang terdampak.
+
 ## Layar (urutan pengerjaan)
 1. Tambah transaksi
 2. Beranda (siklus, budget makan, rekening darurat, ringkasan tagihan dan tabungan, transaksi terbaru)

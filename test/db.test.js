@@ -17,7 +17,7 @@ let pool, app, sid, erik, acc, cat;
 before(async () => {
   if (skip) return;
   pool = createPool(url);
-  await pool.query(`truncate emergency_debt, bill_occurrence, recurring_bill, budget, budget_default, savings_holding, trx, pay_cycle, session restart identity cascade`);
+  await pool.query(`truncate emergency_debt, bill_occurrence, recurring_bill, budget, budget_default, savings_holding, balance_check, trx, pay_cycle, session restart identity cascade`);
   erik = (await pool.query(`select * from app_user where name = 'Erik'`)).rows[0];
   acc = Object.fromEntries((await pool.query('select name, id from account')).rows.map((r) => [r.name, r.id]));
   cat = Object.fromEntries((await pool.query('select name, id from category')).rows.map((r) => [r.name, r.id]));
@@ -815,4 +815,112 @@ test('reset transaksi: simulasi tidak mengubah apa pun, --sejak dan --semua meng
   const s = (await app.inject({ url: '/api/summary', cookies: { sid } })).json();
   assert.deepEqual([s.totals.income, s.totals.expense, s.emergency.open_debt, s.emergency.filled], [0, 0, 0, 10000000]);
   assert.equal(m.user.name, 'Erik');
+});
+
+test('cek saldo: saldo awal, selisih, catat selisih tanpa hitung ganda, pengingat', { skip }, async () => {
+  const m = (await app.inject({ url: '/api/meta', cookies: { sid } })).json();
+  const today = m.today;
+  const A = acc['Rek. utama'];
+  const check = (actual, account_id = A, token = sid) => app.inject({ method: 'POST', url: '/api/balance-checks', cookies: { sid: token }, payload: { account_id, actual } });
+  const list = async () => (await app.inject({ url: `/api/balance-checks?account_id=${A}`, cookies: { sid } })).json();
+  const spend = (amount, date = today, category = 'Belanja') => post({ kind: 'expense', amount, trx_date: date, account_id: A, category_id: cat[category] });
+  await pool.query('delete from trx where balance_check_id is not null'); await pool.query('delete from balance_check');
+
+  // Cek pertama = saldo awal, belum ada selisih.
+  const first = await check(1000000);
+  assert.equal(first.statusCode, 201, first.body);
+  assert.deepEqual([first.json().check.baseline, first.json().check.diff, first.json().check.expected], [true, 0, null]);
+  assert.equal((await app.inject({ method: 'POST', url: `/api/balance-checks/${first.json().check.id}/adjust`, cookies: { sid } })).statusCode, 400);
+
+  // Sesudahnya: pengeluaran 100rb, pemasukan 50rb, tabung 20rb. Uang sekarang 800rb -> perkiraan 930rb, kurang 130rb.
+  await spend(100000);
+  await post({ kind: 'income', amount: 50000, trx_date: today, account_id: A, category_id: cat['Bonus'] });
+  await post({ kind: 'transfer', amount: 20000, trx_date: today, account_id: A, to_account_id: acc['Saham'] });
+  // Catatan terlambat bertanggal SEBELUM cek pertama tidak ikut: sudah tercermin di saldonya.
+  await spend(999000, '2020-01-01');
+  const second = (await check(800000)).json().check;
+  assert.deepEqual([second.prev.actual, second.masuk, second.keluar, second.expected, second.diff],
+    [1000000, 50000, 120000, 930000, -130000]);
+  assert.equal(second.adjusted, false);
+
+  // Catatan susulan bertanggal hari cek, dicatat SESUDAH cek, dianggap terjadi sesudahnya (belum mengurangi selisih)...
+  const found = await spend(30000);
+  assert.equal((await list()).checks[0].diff, -130000);
+  // ...sampai "Hitung ulang": saldo yang sama dianggap berlaku sekarang, jadi catatan itu ikut dihitung.
+  const re = await app.inject({ method: 'POST', url: `/api/balance-checks/${second.id}/recheck`, cookies: { sid } });
+  assert.equal(re.statusCode, 200, re.body);
+  assert.equal(re.json().check.diff, -100000);
+  assert.equal(re.json().check.keluar, 150000);
+  // Dihapus lagi -> selisih kembali (dihitung ulang dari transaksi).
+  await app.inject({ method: 'DELETE', url: `/api/trx/${found.json().item.id}`, cookies: { sid } });
+  assert.equal((await list()).checks[0].diff, -130000);
+  // Catatan bertanggal hari-hari sebelumnya langsung mengurangi selisih tanpa hitung ulang.
+  const earlier = await spend(40000, '2020-06-01');
+  assert.equal((await list()).checks[0].diff, -130000); // sebelum cek pertama: tidak ikut
+  await app.inject({ method: 'DELETE', url: `/api/trx/${earlier.json().item.id}`, cookies: { sid } });
+
+  // Catat selisih sebagai pengeluaran "Lainnya": selisih jadi 0.
+  const adj = await app.inject({ method: 'POST', url: `/api/balance-checks/${second.id}/adjust`, cookies: { sid } });
+  assert.equal(adj.statusCode, 200, adj.body);
+  assert.deepEqual([adj.json().check.diff, adj.json().check.adjusted], [0, true]);
+  const t = (await pool.query('select kind, amount, note, category_id, trx_date from trx where id = $1', [adj.json().trx_id])).rows[0];
+  assert.deepEqual([t.kind, Number(t.amount), t.category_id, t.trx_date], ['expense', 130000, cat['Lainnya'], today]);
+  assert.equal((await app.inject({ method: 'POST', url: `/api/balance-checks/${second.id}/adjust`, cookies: { sid } })).statusCode, 409);
+
+  // Cek ketiga tanpa catatan baru: penyeimbang tidak dihitung dua kali; kurang 300rb murni.
+  const third = (await check(500000)).json().check;
+  assert.deepEqual([third.masuk, third.keluar, third.expected, third.diff], [0, 0, 800000, -300000]);
+  // Cek lama tidak bisa disesuaikan lagi (bukan yang terbaru); yang terbaru bisa, termasuk "lebih".
+  assert.equal((await app.inject({ method: 'POST', url: `/api/balance-checks/${second.id}/adjust`, cookies: { sid } })).statusCode, 409);
+  assert.equal((await app.inject({ method: 'POST', url: `/api/balance-checks/${second.id}/recheck`, cookies: { sid } })).statusCode, 409); // bukan yang terbaru
+  const fourth = (await check(520000)).json().check; // perkiraan 500rb -> lebih 20rb
+  assert.equal(fourth.diff, 20000);
+  const inc = await app.inject({ method: 'POST', url: `/api/balance-checks/${fourth.id}/adjust`, cookies: { sid } });
+  assert.equal(inc.statusCode, 200);
+  assert.equal((await pool.query('select kind from trx where id = $1', [inc.json().trx_id])).rows[0].kind, 'income');
+
+  // Riwayat terbaru dulu; total yang terlewat hanya dari cek yang selisihnya belum dicatat.
+  const hist = await list();
+  assert.deepEqual(hist.checks.map((c) => c.actual), [520000, 500000, 800000, 1000000]);
+  assert.equal(hist.total_diff, 300000);
+
+  // Validasi dan izin.
+  assert.equal((await check(1, acc['Kripto'])).statusCode, 400); // aset ditolak
+  assert.equal((await app.inject({ method: 'POST', url: '/api/balance-checks', cookies: { sid }, payload: { account_id: A, actual: -5 } })).statusCode, 400);
+  const anak = (await pool.query(`select id from app_user where role = 'anak'`)).rows[0];
+  const kid = newSessionToken();
+  await pool.query(`insert into session (token_hash, user_id, expires_at) values ($1, $2, now() + interval '1 day')`, [hashToken(kid), anak.id]);
+  assert.equal((await check(1, A, kid)).statusCode, 403);
+  assert.equal((await app.inject({ url: '/api/balance-checks', cookies: { sid: kid } })).statusCode, 403);
+
+  // Pengingat: mingguan, sudah dicek hari ini -> belum waktunya; cek 8 hari lalu -> waktunya; null -> mati.
+  assert.deepEqual([(await list()).reminder.days, (await list()).reminder.due], [7, false]);
+  await pool.query(`update balance_check set check_date = check_date - 8`);
+  const old = (await list()).reminder;
+  assert.deepEqual([old.days_since, old.due], [8, true]);
+  assert.equal((await app.inject({ method: 'PUT', url: '/api/balance-settings', cookies: { sid }, payload: { days: 30 } })).json().reminder.due, false);
+  assert.equal((await app.inject({ method: 'PUT', url: '/api/balance-settings', cookies: { sid }, payload: { days: null } })).json().reminder.due, false);
+  assert.equal((await app.inject({ method: 'PUT', url: '/api/balance-settings', cookies: { sid }, payload: { days: 0 } })).statusCode, 400);
+  await app.inject({ method: 'PUT', url: '/api/balance-settings', cookies: { sid }, payload: { days: 7 } });
+  // Beranda membawa status pengingat; belum pernah cek sama sekali -> waktunya.
+  assert.equal((await app.inject({ url: '/api/summary', cookies: { sid } })).json().balance_reminder.due, true);
+  await pool.query('delete from trx where balance_check_id is not null'); await pool.query('delete from balance_check');
+  const none = (await app.inject({ url: '/api/summary', cookies: { sid } })).json().balance_reminder;
+  assert.deepEqual([none.last_date, none.days_since, none.due], [null, null, true]);
+});
+
+test('reset transaksi ikut menghapus cek saldo (termasuk transaksi penyeimbang)', { skip }, async () => {
+  const A = acc['Rek. utama'];
+  await pool.query('delete from trx where balance_check_id is not null'); await pool.query('delete from balance_check');
+  const mk = (actual) => app.inject({ method: 'POST', url: '/api/balance-checks', cookies: { sid }, payload: { account_id: A, actual } });
+  await mk(100000);
+  const c2 = (await mk(40000)).json().check;
+  const adj = await app.inject({ method: 'POST', url: `/api/balance-checks/${c2.id}/adjust`, cookies: { sid } });
+  assert.equal(adj.statusCode, 200, adj.body);
+  assert.equal((await pool.query('select count(*)::int n from balance_check')).rows[0].n, 2);
+  const out = execFileSync(process.execPath, ['scripts/reset-transactions.js', '--semua', '--commit'],
+    { env: { ...process.env, DATABASE_URL: url }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  assert.match(out, /Cek saldo\s+: 2 dihapus/);
+  assert.equal((await pool.query('select count(*)::int n from balance_check')).rows[0].n, 0);
+  assert.equal((await pool.query('select count(*)::int n from trx')).rows[0].n, 0);
 });

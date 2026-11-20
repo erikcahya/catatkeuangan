@@ -2,6 +2,7 @@ import { HttpError } from '../lib/errors.js';
 import { dailyBudgets } from '../lib/budget.js';
 import { ensureBillOccurrences } from '../lib/cycles.js';
 import { billCycleSummary } from './bills.js';
+import { balanceReminder } from './balance.js';
 import { cycleEnd, cycleLabel, cycleStart, daysBetween, isValidDate, todayJakarta } from '../lib/dates.js';
 
 /**
@@ -95,6 +96,7 @@ export default async function summaryRoutes(app) {
         : null,
       bills,
       savings: savings.rows[0],
+      balance_reminder: await balanceReminder(pool, u.household_id, today),
       restricted: false,
     };
   });

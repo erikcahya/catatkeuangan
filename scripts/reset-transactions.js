@@ -53,6 +53,9 @@ try {
     ? 'delete from bill_occurrence'
     : `delete from bill_occurrence where status = 'pending' or transaction_id in ${ids}`, params)).rowCount;
   const trx = (await c.query(`delete from trx where ${where}`, params)).rowCount;
+  // Cek saldo sebagai titik awal perhitungan ikut dihapus (transaksi penyeimbangnya sudah terhapus di atas).
+  const checks = (await c.query(opt.semua ? 'delete from balance_check'
+    : 'delete from balance_check where check_date >= $1::date', params)).rowCount;
   const cycles = (await c.query(`delete from pay_cycle pc
      where not exists (select 1 from trx t where t.cycle_id = pc.id)
        and not exists (select 1 from bill_occurrence o where o.cycle_id = pc.id)
@@ -65,6 +68,7 @@ try {
   for (const k of byKind) console.log(`  ${k.kind.padEnd(9)} ${String(k.n).padStart(5)} baris, ${rp(k.total)}`);
   console.log(`Utang darurat      : ${debts} dihapus`);
   console.log(`Jadwal tagihan     : ${occ} dihapus (dibuat ulang otomatis saat layar Tagihan dibuka)`);
+  console.log(`Cek saldo          : ${checks} dihapus`);
   console.log(`Siklus kosong      : ${cycles} dihapus`);
   console.log(`Transaksi tersisa  : ${left}`);
 

@@ -397,3 +397,15 @@ a.edit-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 2
 
 .segmented.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .segmented.four button { font-size: 13px; padding: 0 2px; }
+
+/* Cek saldo */
+.balance-banner {
+  background: #E4F1EE; border-color: #B9DCD3; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.banner-actions { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.result { padding: 16px; display: flex; flex-direction: column; gap: 10px; border-radius: 16px; }
+.big-amount.danger { color: var(--danger); }
+.big-amount.in { color: var(--primary); }
+.amt.bad { color: var(--danger); }
+.value.in { color: var(--primary); }

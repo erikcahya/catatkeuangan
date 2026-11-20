@@ -13,6 +13,7 @@ import savingsRoutes from './routes/savings.js';
 import reportRoutes from './routes/report.js';
 import memberRoutes from './routes/members.js';
 import budgetRoutes from './routes/budgets.js';
+import balanceRoutes from './routes/balance.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
 const OPEN_ROUTES = new Set(['/api/auth/login']);
@@ -54,6 +55,7 @@ export function buildApp({ pool, logger = true } = {}) {
   app.register(reportRoutes);
   app.register(memberRoutes);
   app.register(budgetRoutes);
+  app.register(balanceRoutes);
 
   // Pemeriksaan kesehatan untuk Docker/pemantau: tanpa login dan tanpa data, hanya memastikan database hidup.
   app.get('/healthz', async () => {

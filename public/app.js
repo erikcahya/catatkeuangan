@@ -264,6 +264,7 @@ async function renderHome() {
           ${cyclePicker}
         </div>
       </div>
+      ${balanceBanner(s)}
       ${s.restricted ? '' : cycleCard(s)}
       ${slider([
         ...(s.cycle.status === 'current' ? s.daily_budgets.map(dailyCard) : []),
@@ -279,6 +280,10 @@ async function renderHome() {
   </div>`;
 
   setupSliders(app);
+  document.querySelector('[data-dismiss-bc]')?.addEventListener('click', () => {
+    try { localStorage.setItem('bc-dismiss', s.today); } catch { /* tidak apa-apa */ }
+    renderHome(); // "Nanti" = sembunyikan sampai besok
+  });
   document.getElementById('cycle-select')?.addEventListener('change', (e) => {
     selectedCycle = e.target.value === m.cycle.start ? null : e.target.value;
     renderHome();
@@ -1108,6 +1113,7 @@ async function renderReport() {
         <div class="row"><span class="label">Diambil dari rekening darurat</span><span class="value">${rupiah(r.extra.from_emergency)}</span></div>
         <div class="row"><span class="label">Pengeluaran sekali bayar</span><span class="value">${rupiah(r.extra.one_off)}</span></div>
       </div>
+      <a class="see-all start" href="#/cek-saldo">Cek saldo: cari catatan yang terlewat</a>
       <p class="tile-label">Tabung dan pelunasan rekening darurat tidak dihitung sebagai pengeluaran. Penarikan rekening darurat termasuk pengeluaran. Tekan kategori untuk melihat semua transaksinya.</p>
     </div>
     ${tabbar('#/laporan')}
@@ -1335,6 +1341,7 @@ async function renderMembers() {
       ${meta?.user.can_view_reports ? `<div class="card rows">
         <a class="row link-row" href="#/anggaran"><span>Anggaran per kategori</span>${ICON.next}</a>
         <a class="row link-row" href="#/budget-harian"><span>Batas budget harian</span>${ICON.next}</a>
+        <a class="row link-row" href="#/cek-saldo"><span>Cek saldo (cari catatan yang terlewat)</span>${ICON.next}</a>
       </div>` : ''}
       <div class="card rows">
         <a class="row link-row" href="#/anggota/${esc(d.me)}/sandi"><span>Ganti kata sandi saya</span>${ICON.next}</a>
@@ -1610,6 +1617,138 @@ async function renderDailyBudgets() {
   draw();
 }
 
+// ---------- Cek saldo ----------
+
+let balanceAccount = null; // rekening yang sedang dicek (null = yang pertama)
+
+/** Kartu pengingat di Beranda bila sudah waktunya cek saldo. */
+function balanceBanner(s) {
+  const r = s.balance_reminder;
+  if (s.restricted || !r?.due) return '';
+  try { if (localStorage.getItem('bc-dismiss') === s.today) return ''; } catch { /* penyimpanan tidak tersedia */ }
+  const since = r.last_date ? `Sudah ${r.days_since} hari sejak cek saldo terakhir (${tanggalPendek(r.last_date)}).` : 'Anda belum pernah cek saldo.';
+  return `<section class="card balance-banner" aria-label="Pengingat cek saldo">
+    <span class="daily-title">Waktunya cek saldo</span>
+    <span class="tile-label">${esc(since)} Masukkan uang yang ada sekarang untuk menemukan catatan yang terlewat.</span>
+    <div class="banner-actions">
+      <a class="btn-pill" href="#/cek-saldo">Cek sekarang</a>
+      <button type="button" class="btn-text small" data-dismiss-bc>Nanti</button>
+    </div>
+  </section>`;
+}
+
+function balanceResult(c, latest, today) {
+  if (c.baseline) {
+    return `<section class="card result">
+      <span class="eyebrow">Saldo awal dicatat · ${esc(tanggal(c.check_date))}</span>
+      <span class="big-amount">${rupiah(c.actual)}</span>
+      <p class="tile-label">Mulai dari sini, selisih dihitung setiap kali Anda cek saldo. Catat pemasukan dan pengeluaran seperti biasa, lalu cek lagi nanti.</p>
+    </section>`;
+  }
+  const neg = c.diff < 0;
+  const label = c.diff === 0 ? 'Pas' : `${neg ? 'Kurang' : 'Lebih'} ${rupiah(c.diff)}`;
+  const note = c.diff === 0 ? 'Semua tercatat dengan baik.'
+    : neg ? 'Kemungkinan ada pengeluaran yang belum dicatat.' : 'Kemungkinan ada pemasukan yang belum dicatat.';
+  const actionable = latest && c.diff !== 0 && !c.adjusted;
+  return `<section class="card result">
+    <span class="eyebrow">Hasil cek · ${esc(tanggal(c.check_date))}</span>
+    <span class="big-amount${c.diff === 0 ? '' : neg ? ' danger' : ' in'}">${label}</span>
+    <p class="tile-label">${note}</p>
+    <div class="card rows facts">
+      <div class="row"><span class="label">Cek sebelumnya (${esc(tanggalPendek(c.prev.check_date))})</span><span class="value">${rupiah(c.prev.actual)}</span></div>
+      <div class="row"><span class="label">Pemasukan tercatat</span><span class="value in">+${rupiah(c.masuk)}</span></div>
+      <div class="row"><span class="label">Pengeluaran tercatat</span><span class="value">−${rupiah(c.keluar)}</span></div>
+      <div class="row"><span class="label">Perkiraan saldo</span><span class="value">${rupiah(c.expected)}</span></div>
+      <div class="row"><span class="label">Saldo sebenarnya</span><span class="value">${rupiah(c.actual)}</span></div>
+    </div>
+    ${c.adjusted ? `<div class="note-box">Selisih sudah dicatat sebagai ${neg ? 'pengeluaran' : 'pemasukan'} "Selisih saldo".</div>` : ''}
+    ${actionable ? `<button type="button" class="btn-outline" id="bc-find" data-from="${esc(c.prev.check_date)}">Cari di transaksi sejak ${esc(tanggalPendek(c.prev.check_date))}</button>
+      ${c.check_date === today ? '<button type="button" class="btn-text" id="bc-recheck">Sudah menambah catatan yang terlewat? Hitung ulang</button>' : ''}
+      <button type="button" class="btn-primary${neg ? ' warn' : ''}" id="bc-adjust">Catat selisih sebagai ${neg ? 'pengeluaran' : 'pemasukan'} · ${rupiah(c.diff)}</button>` : ''}
+  </section>`;
+}
+
+async function renderBalance() {
+  const m = await loadMeta();
+  if (!m.user.can_view_reports) { location.hash = '#/'; return; }
+  const d = await api(`/api/balance-checks${balanceAccount ? `?account_id=${balanceAccount}` : ''}`);
+  balanceAccount = d.account.id;
+  const [latest, ...older] = d.checks;
+  const REMIND = [['7', 'Tiap minggu'], ['14', 'Tiap 2 minggu'], ['30', 'Tiap bulan'], ['', 'Tidak diingatkan']];
+  const cur = d.reminder.days == null ? '' : String(d.reminder.days);
+
+  const histRow = (c) => `<li class="trx-item"><div class="main">
+      <span class="name">${esc(tanggal(c.check_date))}</span>
+      <span class="tile-label">Saldo ${rupiah(c.actual)} · oleh ${esc(c.user_name)}</span></div>
+    <span class="amt ${c.baseline ? '' : c.diff < 0 ? 'bad' : c.diff > 0 ? 'in' : ''}">${c.baseline ? 'Saldo awal'
+      : c.diff === 0 ? 'Pas' : `${c.diff < 0 ? 'Kurang' : 'Lebih'} ${rupiah(c.diff)}${c.adjusted ? ' · dicatat' : ''}`}</span></li>`;
+
+  app.innerHTML = `<div class="screen">
+    <form class="screen-body" id="bc-form" novalidate>
+      ${backHeader('Temukan catatan yang terlewat', 'Cek saldo', '#/')}
+      <p class="rules-text">Masukkan uang yang benar-benar ada sekarang. Aplikasi membandingkannya dengan perkiraan dari catatan Anda;
+        selisihnya adalah yang belum tercatat. Catat dulu transaksi hari ini, baru cek.</p>
+      ${d.accounts.length > 1 ? `<div class="card rows"><div class="row"><label for="bc-account">Rekening</label>
+        <select id="bc-account">${d.accounts.map((a) => `<option value="${esc(a.id)}"${a.id === d.account.id ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select></div></div>` : ''}
+      <div id="bc-err" class="error" hidden></div>
+      <div class="card field amount">
+        <label for="bc-amount">Uang di ${esc(d.account.name)} sekarang</label>
+        <input id="bc-amount" inputmode="numeric" autocomplete="off" placeholder="Rp 0">
+      </div>
+      <button class="btn-primary" type="submit">Cek sekarang</button>
+      ${latest ? balanceResult(latest, true, d.today) : '<p class="empty">Belum ada cek saldo. Cek pertama mencatat saldo awal.</p>'}
+      ${d.total_diff > 0 ? `<div class="note-box">Total yang belum tertelusuri dari semua cek: ${rupiah(d.total_diff)}.</div>` : ''}
+      ${older.length ? `<div class="section-head"><h2>Riwayat cek</h2></div><ul class="trx-list">${older.map(histRow).join('')}</ul>` : ''}
+      <div class="card rows"><div class="row"><label for="bc-remind">Pengingat di Beranda</label>
+        <select id="bc-remind">${REMIND.map(([v, l]) => `<option value="${v}"${v === cur ? ' selected' : ''}>${l}</option>`).join('')}</select></div></div>
+      <p class="tile-label">Pengingat muncul di Beranda saat aplikasi dibuka, belum berupa notifikasi ke ponsel.</p>
+    </form>
+    ${tabbar('')}
+  </div>`;
+
+  const f = document.getElementById('bc-form');
+  const amt = f.querySelector('#bc-amount');
+  const err = document.getElementById('bc-err');
+  amt.addEventListener('input', () => {
+    const digits = amt.value.replace(/\D/g, '');
+    amt.value = digits === '' ? '' : rupiah(Number(digits)); // "0" tetap valid: Rp 0
+  });
+
+  f.querySelector('#bc-account')?.addEventListener('change', (e) => { balanceAccount = e.target.value; renderBalance(); });
+  f.querySelector('#bc-remind').addEventListener('change', async (e) => {
+    try {
+      await api('/api/balance-settings', { method: 'PUT', body: { days: e.target.value ? Number(e.target.value) : null } });
+      toast(e.target.value ? 'Pengingat diatur.' : 'Pengingat dimatikan.');
+    } catch (ex) { toast(ex.message, { warn: true }); }
+  });
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    err.hidden = true;
+    if (!amt.value.trim()) { err.textContent = 'Isi uang yang ada sekarang (boleh Rp 0).'; err.hidden = false; amt.focus(); return; }
+    const btn = f.querySelector('[type="submit"]');
+    btn.disabled = true;
+    try {
+      const { check } = await api('/api/balance-checks', { method: 'POST', body: { account_id: d.account.id, actual: parseRupiah(amt.value) } });
+      toast(check.baseline ? 'Saldo awal dicatat.' : check.diff === 0 ? 'Pas, semua tercatat.' : `Selisih ${rupiah(check.diff)}.`, { warn: !check.baseline && check.diff < 0 });
+      renderBalance();
+    } catch (ex) { btn.disabled = false; err.textContent = ex.message; err.hidden = false; }
+  });
+  document.getElementById('bc-find')?.addEventListener('click', (e) => {
+    trxFilter = { from: e.currentTarget.dataset.from, to: '' };
+    location.hash = '#/transaksi';
+  });
+  document.getElementById('bc-recheck')?.addEventListener('click', async () => {
+    try { await api(`/api/balance-checks/${latest.id}/recheck`, { method: 'POST' }); toast('Dihitung ulang.'); renderBalance(); }
+    catch (ex) { toast(ex.message, { warn: true }); }
+  });
+  document.getElementById('bc-adjust')?.addEventListener('click', async () => {
+    const neg = latest.diff < 0;
+    if (!confirm(`Catat selisih ${rupiah(latest.diff)} sebagai ${neg ? 'pengeluaran' : 'pemasukan'} "Selisih saldo"?`)) return;
+    try { await api(`/api/balance-checks/${latest.id}/adjust`, { method: 'POST' }); toast('Selisih dicatat.'); renderBalance(); }
+    catch (ex) { toast(ex.message, { warn: true }); }
+  });
+}
+
 /** Halaman ubah transaksi: memakai form Tambah transaksi yang sudah terisi. */
 async function renderEdit(id) {
   await loadMeta();
@@ -1639,6 +1778,7 @@ const routes = [
   [/^#\/anggota$/, renderMembers],
   [/^#\/anggaran$/, renderBudgets],
   [/^#\/budget-harian$/, renderDailyBudgets],
+  [/^#\/cek-saldo$/, renderBalance],
   [/^#\/anggota\/baru$/, () => renderMemberForm(null)],
   [/^#\/anggota\/[0-9a-f-]{36}\/sandi$/, renderOwnPassword],
   [/^#\/anggota\/([0-9a-f-]{36})$/, (id) => renderMemberForm(id)],
