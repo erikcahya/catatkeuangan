@@ -72,7 +72,7 @@ export default async function summaryRoutes(app) {
       ),
       pool.query(
         `select start_date as start, label from pay_cycle
-          where household_id = $1 order by start_date desc limit 24`,
+          where household_id = $1 order by start_date desc limit 120`,
         [u.household_id],
       ),
     ]);
