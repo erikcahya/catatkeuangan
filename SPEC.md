@@ -34,6 +34,7 @@ Ditandai: **[pasti]** = disebut langsung oleh pemilik; **[asumsi]** = tafsiran s
 ### Transfer, tabungan, investasi
 - **[pasti]** Transfer ke rekening sendiri bukan pengeluaran dan bukan tabungan baru (`kind = 'transfer'`).
 - **[pasti, 19 Nov 2026]** Form Tambah transaksi tidak menampilkan pilihan Transfer; pilihannya Pengeluaran, Pemasukan, dan Tabung (transfer ke rekening aset). Transfer tetap dipakai di balik layar untuk Tabung, pelunasan rekening darurat, dan impor catatan lama.
+- **Tarik tabungan** (menjual atau mengambil aset): jenis keempat di form, yaitu transfer dari rekening aset ke rekening biasa. Bukan pemasukan; mengurangi total setoran bersih aset itu di layar Tabungan. Pemasukan lama yang sebenarnya penarikan (mis. "tarik tabungan btc") bisa diubah menjadi Tarik lewat ubah transaksi.
 - **[pasti]** Uang kontrakan yang disisihkan dicatat di kategori Tagihan dan dihitung sebagai tagihan (`counts_as_bill`), bukan tabungan.
 - **[asumsi]** Setoran investasi adalah transfer ke rekening berjenis `asset`. Total setoran per aset dihitung dari transfer itu. `savings_holding.current_value` diisi manual dan boleh kosong.
 - **[asumsi, 19 Nov 2026]** Setoran investasi dicatat sebagai transfer ke rekening aset ("Catat setoran" di layar Tabungan). Kategori pengeluaran "Investasi" tetap ada untuk catatan lama, tetapi tidak dihitung sebagai setoran; layar Tabungan memberi tanda bila ada transaksi di kategori itu.

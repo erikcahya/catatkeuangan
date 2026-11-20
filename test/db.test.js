@@ -735,3 +735,26 @@ test('anggaran: standar per kategori tampil di laporan, batas harian bisa diatur
   assert.equal((await app.inject({ method: 'PUT', url: '/api/budgets/daily', cookies: { sid: token },
     payload: { category_id: cat['Hiburan'], weekday: 1, weekend: 1 } })).statusCode, 403);
 });
+
+test('tarik tabungan: transfer dari rekening aset, bisa diubah dari pemasukan', { skip }, async () => {
+  const m = (await app.inject({ url: '/api/meta', cookies: { sid } })).json();
+  const before = (await app.inject({ url: '/api/savings', cookies: { sid } })).json().assets.find((a) => a.name === 'Kripto');
+
+  // Penarikan lama yang tercatat sebagai pemasukan "Hasil Investasi" diubah menjadi Tarik dari Kripto.
+  const asIncome = await post({ kind: 'income', amount: 900000, trx_date: m.today, account_id: acc['Rek. utama'],
+    category_id: cat['Hasil Investasi'], note: 'tarik tabungan btc' });
+  const id = asIncome.json().item.id;
+  const sum0 = (await app.inject({ url: `/api/summary?cycle=${m.cycle.start}`, cookies: { sid } })).json().totals.income;
+  const put = await app.inject({ method: 'PUT', url: `/api/trx/${id}`, cookies: { sid },
+    payload: { kind: 'transfer', amount: 900000, trx_date: m.today, account_id: acc['Kripto'], to_account_id: acc['Rek. utama'], note: 'tarik tabungan btc' } });
+  assert.equal(put.statusCode, 200, put.body);
+  const item = put.json().item;
+  assert.deepEqual([item.kind, item.account_kind, item.account_name, item.to_account_name, item.category_id], ['transfer', 'asset', 'Kripto', 'Rek. utama', null]);
+
+  // Bukan lagi pemasukan, dan mengurangi total setoran bersih Kripto.
+  const sum1 = (await app.inject({ url: `/api/summary?cycle=${m.cycle.start}`, cookies: { sid } })).json().totals.income;
+  assert.equal(sum0 - sum1, 900000);
+  const after = (await app.inject({ url: '/api/savings', cookies: { sid } })).json().assets.find((a) => a.name === 'Kripto');
+  assert.equal(before.net_invested - after.net_invested, 900000);
+  assert.equal(after.cycle_net - before.cycle_net, -900000);
+});

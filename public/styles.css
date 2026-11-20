@@ -394,3 +394,6 @@ a.edit-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 2
 .money-input:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
 .money-input::placeholder { color: var(--muted); font-weight: 400; }
 .see-all.start { align-self: flex-start; padding: 6px 0; }
+
+.segmented.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.segmented.four button { font-size: 13px; padding: 0 2px; }

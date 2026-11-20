@@ -115,7 +115,7 @@ const pct = (part, whole) => (whole > 0 ? Math.min(100, Math.max(0, (part / whol
 function trxLine(t, { withDelete = true } = {}) {
   const sign = t.kind === 'income' ? '+' : t.kind === 'expense' ? '−' : '';
   // Transfer ke rekening aset ditampilkan sebagai "Tabung".
-  const moveLabel = t.to_account_kind === 'asset' ? 'Tabung' : 'Transfer';
+  const moveLabel = t.to_account_kind === 'asset' ? 'Tabung' : t.account_kind === 'asset' ? 'Tarik' : 'Transfer';
   const name = t.note || (t.kind === 'transfer' ? `${moveLabel} ke ${t.to_account_name}` : t.category_name);
   const where = t.kind === 'transfer'
     ? `${moveLabel} · ${t.account_name} → ${t.to_account_name}`
@@ -300,7 +300,9 @@ async function renderHome() {
 // "Tabung" = transfer ke rekening aset (kripto, saham, emas). Di server tetap kind 'transfer'.
 // Pilihan "Transfer" antar rekening biasa sengaja tidak ditampilkan (keputusan pemilik, 19 Nov 2026);
 // transfer tetap dipakai di balik layar untuk Tabung, pelunasan darurat, dan impor.
-const KIND_LABEL = { expense: 'Pengeluaran', income: 'Pemasukan', saving: 'Tabung' };
+// "Tarik" = transfer dari rekening aset ke rekening biasa (menjual/menarik tabungan).
+const KIND_LABEL = { expense: 'Pengeluaran', income: 'Pemasukan', saving: 'Tabung', withdraw: 'Tarik' };
+const isMoving = (k) => k === 'transfer' || k === 'saving' || k === 'withdraw';
 
 /**
  * @param preset  { kind, toAccountId, title, back } — dipakai mis. oleh tombol "Tabung"
@@ -311,14 +313,14 @@ async function renderAdd(preset = {}) {
   const emergency = m.accounts.find((a) => a.is_emergency);
   const assets = m.accounts.filter((a) => a.kind === 'asset');
   const nonAsset = m.accounts.filter((a) => a.kind !== 'asset');
-  const kinds = Object.entries(KIND_LABEL).filter(([k]) => k !== 'saving' || assets.length);
+  const kinds = Object.entries(KIND_LABEL).filter(([k]) => (k !== 'saving' && k !== 'withdraw') || assets.length);
   // Mode ubah: preset.edit = transaksi dari GET /api/trx/:id. Yang punya utang darurat atau
   // tertaut ke tagihan terkunci jenisnya; penarikan darurat juga terkunci rekeningnya.
   const edit = preset.edit ?? null;
   const lockKind = !!edit && (edit.is_emergency_withdrawal || edit.is_bill_payment
-    || (edit.kind === 'transfer' && edit.to_account_kind !== 'asset'));
+    || (edit.kind === 'transfer' && edit.to_account_kind !== 'asset' && edit.account_kind !== 'asset'));
   const lockAccounts = !!edit && edit.is_emergency_withdrawal;
-  const editKind = !edit ? null : edit.kind === 'transfer' ? (edit.to_account_kind === 'asset' ? 'saving' : 'transfer') : edit.kind;
+  const editKind = !edit ? null : edit.kind === 'transfer' ? (edit.to_account_kind === 'asset' ? 'saving' : edit.account_kind === 'asset' ? 'withdraw' : 'transfer') : edit.kind;
   const lockNote = !edit ? '' : edit.is_emergency_withdrawal
     ? (edit.debt_status === 'paid'
       ? 'Penarikan rekening darurat ini sudah dilunasi, jadi jumlah, jenis, dan rekeningnya tidak bisa diubah.'
@@ -337,7 +339,7 @@ async function renderAdd(preset = {}) {
         <h1 class="title">${esc(preset.title ?? 'Tambah transaksi')}</h1>
         <a class="icon-btn" href="${back}" aria-label="Tutup">${ICON.close}</a>
       </div>
-      ${lockKind ? '' : `<div class="segmented${kinds.length === 2 ? ' two' : ''}" role="group" aria-label="Jenis transaksi">
+      ${lockKind ? '' : `<div class="segmented${kinds.length === 2 ? ' two' : kinds.length === 4 ? ' four' : ''}" role="group" aria-label="Jenis transaksi">
         ${kinds.map(([k, label]) =>
           `<button type="button" data-kind="${k}" aria-pressed="${k === state.kind}">${label}</button>`).join('')}
       </div>`}
@@ -412,22 +414,23 @@ async function renderAdd(preset = {}) {
     const prev = form.category.value;
     form.category.innerHTML = options(cats, cats.some((c) => c.id === prev) ? prev : cats[0]?.id);
     const fromEm = k === 'expense' && (edit?.is_emergency_withdrawal || form.from_emergency?.checked);
-    const moving = k === 'transfer' || k === 'saving';
+    const moving = isMoving(k);
     show('row-category', !moving);
     show('row-to', moving);
     show('expense-toggles', k === 'expense');
     show('row-account', !fromEm);
     show('row-emergency-account', fromEm);
-    document.getElementById('account-label').textContent = k === 'income' ? 'Ke rekening' : 'Dari rekening';
+    document.getElementById('account-label').textContent = k === 'income' ? 'Ke rekening' : k === 'withdraw' ? 'Dari tabungan' : 'Dari rekening';
     document.getElementById('to-label').textContent = k === 'saving' ? 'Ke tabungan' : 'Ke rekening';
     if (moving) {
-      const toList = k === 'saving' ? assets : m.accounts;
+      const toList = k === 'saving' ? assets : k === 'withdraw' ? regular.filter((a) => a.kind !== 'asset') : m.accounts;
       const prevTo = form.to_account.value;
-      const fallback = k === 'saving' ? (preset.toAccountId ?? assets[0]?.id) : (emergency?.id ?? m.accounts[1]?.id);
+      const fallback = k === 'saving' ? (preset.toAccountId ?? assets[0]?.id)
+        : k === 'withdraw' ? toList[0]?.id : (emergency?.id ?? m.accounts[1]?.id);
       form.to_account.innerHTML = options(toList, toList.some((a) => a.id === prevTo) ? prevTo : fallback);
     }
-    // Transfer boleh dari rekening mana pun, termasuk rekening darurat; tabung dari rekening non-aset.
-    const accList = k === 'transfer' ? m.accounts : k === 'saving' ? nonAsset : regular;
+    // Transfer boleh dari rekening mana pun; tabung dari rekening non-aset; tarik dari rekening aset.
+    const accList = k === 'transfer' ? m.accounts : k === 'saving' ? nonAsset : k === 'withdraw' ? assets : regular;
     const prevAcc = form.account.value;
     form.account.innerHTML = options(accList, accList.some((a) => a.id === prevAcc) ? prevAcc : accList[0]?.id);
   }
@@ -474,7 +477,7 @@ async function renderAdd(preset = {}) {
     const fail = (msg, el) => { err.textContent = msg; err.hidden = false; el?.focus(); };
     if (!amount) return fail('Isi jumlahnya dulu.', form.amount);
     if (!form.trx_date.value) return fail('Isi tanggalnya.', form.trx_date);
-    const moving = state.kind === 'transfer' || state.kind === 'saving';
+    const moving = isMoving(state.kind);
     if (moving && form.account.value === form.to_account.value) {
       return fail('Rekening asal dan tujuan harus berbeda.', form.to_account);
     }
@@ -976,7 +979,7 @@ async function renderSavings() {
       <p class="tile-label">Nilai sekarang diisi manual dan boleh dikosongkan; tekan aset untuk mengubahnya.
         Total setoran dihitung dari yang Anda tabung, dikurangi yang ditarik kembali.</p>
     </div>
-    ${s.assets.length ? '<div class="footer"><a class="btn-primary as-link" href="#/tabungan/setor">Tabung</a></div>' : ''}
+    ${s.assets.length ? '<div class="footer"><a class="btn-primary as-link" href="#/tabungan/setor">Tabung</a><a class="btn-text" href="#/tabungan/tarik">Tarik tabungan</a></div>' : ''}
   </div>
   <dialog id="value-dialog" class="sheet" aria-labelledby="value-title"></dialog>`;
 
@@ -1019,6 +1022,12 @@ async function renderSavings() {
     dlg.showModal();
     amt.focus();
   }));
+}
+
+/** Tombol "Tarik tabungan" = form tambah transaksi dengan jenis Tarik (transfer dari rekening aset). */
+async function renderWithdraw() {
+  await loadMeta();
+  return renderAdd({ kind: 'withdraw', title: 'Tarik tabungan', back: '#/tabungan' });
 }
 
 /** Tombol "Tabung" = form tambah transaksi dengan jenis Tabung (transfer ke rekening aset). */
@@ -1635,6 +1644,7 @@ const routes = [
   [/^#\/anggota\/([0-9a-f-]{36})$/, (id) => renderMemberForm(id)],
   [/^#\/tabungan$/, renderSavings],
   [/^#\/tabungan\/setor$/, renderDeposit],
+  [/^#\/tabungan\/tarik$/, renderWithdraw],
   [/^#\/tagihan$/, renderBills],
   [/^#\/tagihan\/baru$/, () => renderBillForm(null)],
   [/^#\/tagihan\/([0-9a-f-]{36})$/, (id) => renderBillForm(id)],
