@@ -262,6 +262,9 @@ a.tile:focus-visible, .link-row:focus-visible { outline: 2px solid var(--primary
   height: 44px; padding: 0 16px; border-radius: 22px; border: none;
   background: var(--primary); color: var(--on-primary);
   font-size: 13px; font-weight: 600; cursor: pointer;
+  /* Juga dipakai pada tautan (<a>): teks harus di tengah dan tidak turun baris. */
+  display: inline-flex; align-items: center; justify-content: center;
+  text-decoration: none; white-space: nowrap; line-height: 1;
 }
 .btn-pill.outline { background: var(--surface); color: var(--primary); border: 1.5px solid var(--primary); }
 .link-row { color: var(--text); }
