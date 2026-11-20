@@ -13,8 +13,13 @@ export default async function metaRoutes(app) {
         [u.household_id],
       ),
       pool.query(
-        `select id, name, kind, counts_as_bill from category
-          where household_id = $1 order by kind, name`,
+        // uses = berapa kali dipakai 180 hari terakhir: untuk bagian "Sering dipakai" di pilihan kategori.
+        `select c.id, c.name, c.kind, c.counts_as_bill,
+                (select count(*)::int from trx t
+                  where t.category_id = c.id and t.deleted_at is null
+                    and t.trx_date >= current_date - 180) as uses
+           from category c
+          where c.household_id = $1 order by c.kind, c.name`,
         [u.household_id],
       ),
     ]);

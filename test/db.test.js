@@ -63,6 +63,7 @@ test('meta berisi rekening, kategori, dan siklus berjalan', { skip }, async () =
   const m = (await app.inject({ url: '/api/meta', cookies: { sid } })).json();
   assert.equal(m.accounts.length, 5);
   assert.equal(m.categories.length, 23);
+  assert.ok(m.categories.every((c) => Number.isInteger(c.uses) && c.uses >= 0)); // untuk "Sering dipakai"
   assert.equal(m.cycle.start, cycleStart(m.today));
 });
 

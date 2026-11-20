@@ -82,6 +82,11 @@ Pemilik sering lupa mencatat. Pengguna memasukkan uang yang benar-benar ada di s
 - Pengingat: jarak hari di `household.balance_check_days` (bawaan 7; pilihan 7, 14, 30 hari, atau mati). Berupa kartu di Beranda saat aplikasi dibuka (bisa "Nanti" sampai besok), belum notifikasi ke ponsel. Hanya untuk anggota yang boleh melihat laporan.
 - Reset transaksi (`scripts/reset-transactions.js`) ikut menghapus cek saldo yang terdampak.
 
+### Pilihan kategori dan rekening (ikon)
+- Kategori dan rekening dipilih lewat lembar dari bawah, bukan `<select>` polos. Kategori: kotak berikon, kolom cari (menemukan lewat kata kunci, mis. "kopi" -> Makan dan Minum), bagian "Sering dipakai" (jumlah pemakaian 180 hari terakhir dari `/api/meta`), kategori awal = yang paling sering dipakai. Rekening: daftar berikon dengan keterangan jenisnya.
+- Ikon dibuat sendiri (SVG garis, `public/icons.js`), diturunkan dari nama kategori/rekening dengan ikon cadangan untuk nama baru; tidak ada berkas gambar. Ikon juga tampil di daftar transaksi, Laporan, dan pengaturan anggaran.
+- Pengeluaran/pemasukan tidak menawarkan rekening tabungan (kripto, saham, emas); penarikannya lewat jenis Tarik.
+
 ## Layar (urutan pengerjaan)
 1. Tambah transaksi
 2. Beranda (siklus, budget makan, rekening darurat, ringkasan tagihan dan tabungan, transaksi terbaru)

@@ -1,8 +1,25 @@
 import {
   rupiah, rupiahSingkat, parseRupiah, tanggal, tanggalPendek, selisihHari, esc,
 } from './format.js';
+import {
+  accountBadge, accountSubtitle, categoryBadge, categoryKeywords, transferBadge,
+} from './icons.js';
+import { enhanceSelect } from './picker.js';
 
 const app = document.getElementById('app');
+
+// Pilihan kategori (kotak berikon + cari) dan rekening (daftar berikon) menggantikan <select> polos.
+const categoryPicker = (select, title = 'Pilih kategori') => enhanceSelect(select, {
+  title, mode: 'grid', searchable: true, placeholder: 'Pilih kategori',
+  badge: (o) => categoryBadge(o.textContent), keywords: (o) => categoryKeywords(o.textContent),
+});
+const accountPicker = (select, title) => enhanceSelect(select, {
+  title, mode: 'list',
+  badge: (o) => accountBadge(o.textContent, { kind: o.dataset.kind, emergency: o.dataset.emergency === '1' }),
+  subtitle: (o) => accountSubtitle(o.dataset.kind, o.dataset.emergency === '1'),
+});
+/** Atribut data-* untuk <option> rekening/kategori (jenis, darurat, jumlah pemakaian). */
+const optData = (x) => ` data-kind="${esc(x.kind ?? '')}" data-emergency="${x.is_emergency ? 1 : 0}" data-uses="${x.uses ?? 0}"`;
 const toastEl = document.getElementById('toast');
 let meta = null; // { user, today, cycle, accounts, categories }
 
@@ -112,7 +129,7 @@ let selectedCycle = null; // awal siklus yang dipilih; null = siklus berjalan
 
 const pct = (part, whole) => (whole > 0 ? Math.min(100, Math.max(0, (part / whole) * 100)) : 0);
 
-function trxLine(t, { withDelete = true } = {}) {
+function trxLine(t, { withDelete = true, showDate = true } = {}) {
   const sign = t.kind === 'income' ? '+' : t.kind === 'expense' ? '−' : '';
   // Transfer ke rekening aset ditampilkan sebagai "Tabung".
   const moveLabel = t.to_account_kind === 'asset' ? 'Tabung' : t.account_kind === 'asset' ? 'Tarik' : 'Transfer';
@@ -122,10 +139,16 @@ function trxLine(t, { withDelete = true } = {}) {
     : t.is_emergency_withdrawal ? `${t.category_name} · utang ke rekening darurat` : `${t.category_name} · ${t.account_name}`;
   // Menekan baris membuka halaman ubah; pelunasan utang darurat diubah dari layar Rekening darurat.
   const href = t.is_repayment ? '#/darurat' : `#/ubah/${esc(t.id)}`;
+  // Ikon: kategori untuk pemasukan/pengeluaran; untuk perpindahan uang, rekening aset atau darurat yang terlibat.
+  const icon = t.kind !== 'transfer' ? categoryBadge(t.category_name)
+    : t.to_account_kind === 'asset' ? accountBadge(t.to_account_name, { kind: 'asset' })
+      : t.account_kind === 'asset' ? accountBadge(t.account_name, { kind: 'asset' })
+        : (t.is_repayment || t.is_emergency_withdrawal) ? accountBadge('Rekening darurat', { emergency: true }) : transferBadge();
   return `<li class="trx-item">
+    ${icon}
     <a class="main edit-link" href="${href}" aria-label="${t.is_repayment ? 'Buka rekening darurat' : 'Ubah'}: ${esc(name)}">
       <span class="name">${esc(name)}</span>
-      <span class="meta${t.is_emergency_withdrawal ? ' warn' : ''}">${esc(where)} · ${esc(tanggal(t.trx_date))} · oleh ${esc(t.recorded_by)}</span>
+      <span class="meta${t.is_emergency_withdrawal ? ' warn' : ''}">${esc(where)}${showDate ? ` · ${esc(tanggal(t.trx_date))}` : ''} · oleh ${esc(t.recorded_by)}</span>
     </a>
     <div class="right">
       <span class="amt${t.kind === 'income' ? ' in' : ''}">${sign}${rupiah(t.amount)}</span>
@@ -315,6 +338,8 @@ const isMoving = (k) => k === 'transfer' || k === 'saving' || k === 'withdraw';
 async function renderAdd(preset = {}) {
   const m = await loadMeta();
   const regular = m.accounts.filter((a) => !a.is_emergency);
+  // Pengeluaran/pemasukan tidak lewat rekening tabungan (kripto, saham, emas); penarikannya lewat jenis Tarik.
+  const spendable = regular.filter((a) => a.kind !== 'asset');
   const emergency = m.accounts.find((a) => a.is_emergency);
   const assets = m.accounts.filter((a) => a.kind === 'asset');
   const nonAsset = m.accounts.filter((a) => a.kind !== 'asset');
@@ -335,7 +360,7 @@ async function renderAdd(preset = {}) {
   const back = preset.back ?? '#/';
 
   const options = (list, selected) => list
-    .map((x) => `<option value="${esc(x.id)}"${x.id === selected ? ' selected' : ''}>${esc(x.name)}</option>`)
+    .map((x) => `<option value="${esc(x.id)}"${optData(x)}${x.id === selected ? ' selected' : ''}>${esc(x.name)}</option>`)
     .join('');
 
   app.innerHTML = `<form class="screen" id="add-form" novalidate>
@@ -361,7 +386,7 @@ async function renderAdd(preset = {}) {
         </div>
         <div class="row" id="row-account">
           <label for="account" id="account-label">Dari rekening</label>
-          <select id="account" name="account">${options(regular, regular[0]?.id)}</select>
+          <select id="account" name="account">${options(spendable, spendable[0]?.id)}</select>
         </div>
         <div class="row" id="row-emergency-account" hidden>
           <span class="label">Dari rekening</span>
@@ -410,6 +435,9 @@ async function renderAdd(preset = {}) {
 
   const form = document.getElementById('add-form');
   const err = document.getElementById('add-err');
+  categoryPicker(form.category);
+  accountPicker(form.account, 'Pilih rekening');
+  accountPicker(form.to_account, 'Pilih rekening tujuan');
   const show = (id, on) => { document.getElementById(id).hidden = !on; };
 
   function sync() {
@@ -417,7 +445,8 @@ async function renderAdd(preset = {}) {
     form.querySelectorAll('[data-kind]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.kind === k)));
     const cats = m.categories.filter((c) => c.kind === k);
     const prev = form.category.value;
-    form.category.innerHTML = options(cats, cats.some((c) => c.id === prev) ? prev : cats[0]?.id);
+    const mostUsed = [...cats].sort((a, b) => (b.uses ?? 0) - (a.uses ?? 0))[0];
+    form.category.innerHTML = options(cats, cats.some((c) => c.id === prev) ? prev : mostUsed?.id);
     const fromEm = k === 'expense' && (edit?.is_emergency_withdrawal || form.from_emergency?.checked);
     const moving = isMoving(k);
     show('row-category', !moving);
@@ -435,7 +464,10 @@ async function renderAdd(preset = {}) {
       form.to_account.innerHTML = options(toList, toList.some((a) => a.id === prevTo) ? prevTo : fallback);
     }
     // Transfer boleh dari rekening mana pun; tabung dari rekening non-aset; tarik dari rekening aset.
-    const accList = k === 'transfer' ? m.accounts : k === 'saving' ? nonAsset : k === 'withdraw' ? assets : regular;
+    let accList = k === 'transfer' ? m.accounts : k === 'saving' ? nonAsset : k === 'withdraw' ? assets : spendable;
+    // Transaksi lama yang tercatat dari rekening aset tetap bisa diubah tanpa kehilangan rekeningnya.
+    const current = edit && m.accounts.find((a) => a.id === edit.account_id);
+    if (current && !accList.some((a) => a.id === current.id)) accList = [...accList, current];
     const prevAcc = form.account.value;
     form.account.innerHTML = options(accList, accList.some((a) => a.id === prevAcc) ? prevAcc : accList[0]?.id);
   }
@@ -684,7 +716,7 @@ async function renderBillForm(id) {
     category_id: (cats.find((c) => c.counts_as_bill) ?? cats[0])?.id,
     account_id: accounts.find((a) => !a.is_emergency)?.id,
   };
-  const opt = (value, label, sel) => `<option value="${esc(value)}"${value === sel ? ' selected' : ''}>${esc(label)}</option>`;
+  const opt = (value, label, sel, extra = '') => `<option value="${esc(value)}"${extra}${value === sel ? ' selected' : ''}>${esc(label)}</option>`;
 
   app.innerHTML = `<form class="screen" id="bill-form" novalidate>
     <div class="screen-body">
@@ -728,11 +760,11 @@ async function renderBillForm(id) {
         </div>
         <div class="row">
           <label for="b-cat">Kategori</label>
-          <select id="b-cat">${cats.map((c) => opt(c.id, c.name, v.category_id)).join('')}</select>
+          <select id="b-cat">${cats.map((c) => opt(c.id, c.name, v.category_id, optData(c))).join('')}</select>
         </div>
         <div class="row">
           <label for="b-acc">Dibayar dari</label>
-          <select id="b-acc">${accounts.map((a) => opt(a.id, a.name, v.account_id)).join('')}</select>
+          <select id="b-acc">${accounts.map((a) => opt(a.id, a.name, v.account_id, optData(a))).join('')}</select>
         </div>
         ${bill ? `<label class="row toggle">
           <span class="text"><span>Aktif</span>
@@ -748,6 +780,8 @@ async function renderBillForm(id) {
 
   const f = document.getElementById('bill-form');
   const err = document.getElementById('bill-err');
+  categoryPicker(f.querySelector('#b-cat'));
+  accountPicker(f.querySelector('#b-acc'), 'Dibayar dari');
   const amt = f.querySelector('#b-amount');
   amt.addEventListener('input', () => { const n = parseRupiah(amt.value); amt.value = n ? rupiah(n) : ''; });
   if (!bill) f.querySelector('#b-name').focus();
@@ -1077,7 +1111,7 @@ async function renderReport() {
       ? `${rupiahSingkat(c.total)} / ${rupiahSingkat(c.budget).replace('Rp ', '')}`
       : `${rupiahSingkat(c.total)} · ${Math.round(pct(c.total, expense))}%`;
     return `<li><a class="cat-head" href="#/laporan/kategori/${esc(c.category_id)}">
-        <span class="cat-line"><span class="cat-name">${esc(c.name)}</span>
+        <span class="cat-line"><span class="cat-name">${categoryBadge(c.name, 'sm')}${esc(c.name)}</span>
           <span class="cat-right"><span class="${over ? 'danger-text' : 'tile-label'}">${right}</span>${ICON.next}</span></span>
         <span class="cat-track"><span class="${over ? 'over' : ''}" style="width:${width}%"></span></span>
       </a></li>`;
@@ -1166,7 +1200,7 @@ async function renderCategory(categoryId) {
         ? groups.map((g) => `<section aria-label="${esc(tanggal(g.date))}">
             <div class="date-row"><h2 class="date-head">${esc(tanggal(g.date))}</h2>
               <span class="tile-label">${rupiah(g.total)}</span></div>
-            <ul class="trx-list">${g.items.map((t) => trxLine(t)).join('')}</ul>
+            <ul class="trx-list">${g.items.map((t) => trxLine(t, { showDate: false })).join('')}</ul>
           </section>`).join('')
         : `<p class="empty">Belum ada transaksi ${esc(cat.name)} di siklus ini.</p>`}
       ${items.length === 200 ? '<p class="tile-label">Menampilkan 200 transaksi terbaru.</p>' : ''}
@@ -1246,7 +1280,7 @@ async function renderTransactions() {
     box.innerHTML = groups.length
       ? groups.map((g) => `<section aria-label="${esc(tanggal(g.date))}">
           <h2 class="date-head">${esc(tanggal(g.date))}</h2>
-          <ul class="trx-list">${g.items.map((t) => trxLine(t)).join('')}</ul>
+          <ul class="trx-list">${g.items.map((t) => trxLine(t, { showDate: false })).join('')}</ul>
         </section>`).join('')
       : `<p class="empty">${trxFilter ? 'Tidak ada transaksi di rentang tanggal ini.' : 'Belum ada transaksi. Tekan + untuk mencatat.'}</p>`;
     more.hidden = done;
@@ -1506,7 +1540,7 @@ async function renderBudgets() {
       <div id="b-err" class="error" hidden></div>
       <div class="card rows">
         ${d.items.map((x) => `<div class="row">
-          <label for="b-${esc(x.category_id)}">${esc(x.name)}</label>
+          <label for="b-${esc(x.category_id)}" class="with-ico">${categoryBadge(x.name, 'sm')}<span>${esc(x.name)}</span></label>
           <input class="money-input" id="b-${esc(x.category_id)}" data-money data-cat="${esc(x.category_id)}" data-orig="${x.limit ?? ''}"
             inputmode="numeric" autocomplete="off" placeholder="Tanpa anggaran" value="${x.limit == null ? '' : rupiah(x.limit)}">
         </div>`).join('')}
@@ -1569,13 +1603,15 @@ async function renderDailyBudgets() {
           </div>
         </section>`).join('') : '<p class="empty">Belum ada batas harian.</p>'}
         ${free.length ? `<div class="card rows"><div class="row"><label for="d-add">Tambah kategori</label>
-          <select id="d-add"><option value="">Pilih…</option>${free.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select></div></div>` : ''}
+          <select id="d-add"><option value="">Pilih…</option>${free.map((c) => `<option value="${esc(c.id)}"${optData(c)}>${esc(c.name)}</option>`).join('')}</select></div></div>` : ''}
       </div>
       <div class="footer"><button class="btn-primary" type="submit">Simpan batas harian</button></div>
     </form>`;
 
     const f = document.getElementById('daily-form');
     bindMoneyInputs(f);
+    const adder = document.getElementById('d-add');
+    if (adder) categoryPicker(adder, 'Tambah kategori');
     const keep = () => f.querySelectorAll('[data-i]').forEach((inp) => { rows[Number(inp.dataset.i)][inp.dataset.f] = moneyValue(inp); });
     f.querySelectorAll('[data-remove]').forEach((b) => b.addEventListener('click', () => {
       keep();
@@ -1804,6 +1840,7 @@ async function route() {
     await render();
   } catch (ex) {
     if (ex.status === 401) return; // sudah dialihkan ke login
+    console.error(ex); // jejak galat untuk konsol browser
     app.innerHTML = `<div class="screen"><div class="screen-body">
       <div class="error">${esc(ex.message)}</div>
       <button class="btn-primary" type="button" id="retry">Coba lagi</button>
