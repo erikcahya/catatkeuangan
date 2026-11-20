@@ -12,13 +12,17 @@ const nullableUuid = { type: ['string', 'null'], format: 'uuid' };
 
 export const LIST_SQL = `
   select t.id, t.kind, t.amount, t.trx_date, t.note, t.is_one_off, t.created_at, t.updated_at,
+         t.account_id, t.to_account_id, t.category_id,
          a.name  as account_name,
          ta.name as to_account_name,
          ta.kind as to_account_kind,
          c.name  as category_name,
          u.name  as recorded_by,
          ub.name as updated_by,
-         (ed.id is not null) as is_emergency_withdrawal
+         (ed.id is not null) as is_emergency_withdrawal,
+         ed.status as debt_status,
+         exists (select 1 from emergency_debt r where r.repayment_trx_id = t.id) as is_repayment,
+         exists (select 1 from bill_occurrence o where o.transaction_id = t.id) as is_bill_payment
     from trx t
     join account a       on a.id = t.account_id
     left join account ta on ta.id = t.to_account_id
@@ -27,6 +31,47 @@ export const LIST_SQL = `
     left join app_user ub on ub.id = t.updated_by
     left join emergency_debt ed on ed.withdrawal_trx_id = t.id
    where a.household_id = $1 and t.deleted_at is null`;
+
+const trxBody = {
+  kind: { enum: ['income', 'expense', 'transfer'] },
+  amount: { type: 'integer', minimum: 1, maximum: 999_999_999_999 },
+  trx_date: { type: 'string' },
+  account_id: nullableUuid,
+  to_account_id: nullableUuid,
+  category_id: nullableUuid,
+  note: { type: ['string', 'null'], maxLength: 300 },
+  is_one_off: { type: 'boolean', default: false },
+};
+
+/**
+ * Validasi rekening dan kategori sebuah transaksi (dipakai catat dan ubah).
+ * forcedAccountId / forcedToAccountId: rekening yang dikunci (penarikan darurat).
+ */
+async function resolveTarget(c, u, b, { forcedAccountId = null, forcedToAccountId = null } = {}) {
+  const accounts = (await c.query('select id from account where household_id = $1', [u.household_id])).rows;
+  const known = new Set(accounts.map((a) => a.id));
+  const accountId = forcedAccountId ?? b.account_id;
+  if (!known.has(accountId)) throw new HttpError(400, 'Pilih rekening.');
+
+  if (b.kind === 'transfer') {
+    const toAccountId = forcedToAccountId ?? b.to_account_id;
+    if (!known.has(toAccountId)) throw new HttpError(400, 'Pilih rekening tujuan.');
+    if (toAccountId === accountId) throw new HttpError(400, 'Rekening asal dan tujuan harus berbeda.');
+    return { accountId, toAccountId, categoryId: null, category: null };
+  }
+  const cat = (await c.query(
+    'select id, name, kind from category where id = $1 and household_id = $2',
+    [b.category_id, u.household_id],
+  )).rows[0];
+  if (!cat) throw new HttpError(400, 'Pilih kategori.');
+  if (cat.kind !== b.kind) throw new HttpError(400, 'Kategori tidak cocok dengan jenis transaksi.');
+  return { accountId, toAccountId: null, categoryId: cat.id, category: cat };
+}
+
+/** Awal siklus untuk sebuah transaksi: gaji ke siklus gajian terdekat, lainnya menurut tanggal. */
+function cycleFor(date, category, payday) {
+  return category?.name === SALARY_CATEGORY ? salaryCycleStart(date, payday) : cycleStart(date, payday);
+}
 
 export default async function trxRoutes(app) {
   const pool = app.pg;
@@ -63,23 +108,21 @@ export default async function trxRoutes(app) {
     return { items: rows };
   });
 
+  app.get('/api/trx/:id', {
+    schema: { params: { type: 'object', properties: { id: uuid }, required: ['id'] } },
+  }, async (req) => {
+    const { rows } = await pool.query(`${LIST_SQL} and t.id = $2`, [req.user.household_id, req.params.id]);
+    if (!rows[0]) throw new HttpError(404, 'Transaksi tidak ditemukan.');
+    return { item: rows[0] };
+  });
+
   app.post('/api/trx', {
     schema: {
       body: {
         type: 'object',
         required: ['kind', 'amount', 'trx_date'],
         additionalProperties: false,
-        properties: {
-          kind: { enum: ['income', 'expense', 'transfer'] },
-          amount: { type: 'integer', minimum: 1, maximum: 999_999_999_999 },
-          trx_date: { type: 'string' },
-          account_id: nullableUuid,
-          to_account_id: nullableUuid,
-          category_id: nullableUuid,
-          note: { type: ['string', 'null'], maxLength: 300 },
-          is_one_off: { type: 'boolean', default: false },
-          from_emergency: { type: 'boolean', default: false },
-        },
+        properties: { ...trxBody, from_emergency: { type: 'boolean', default: false } },
       },
     },
   }, async (req, reply) => {
@@ -88,61 +131,28 @@ export default async function trxRoutes(app) {
     if (!isValidDate(b.trx_date)) throw new HttpError(400, 'Tanggal tidak valid.');
 
     const result = await withTx(pool, async (c) => {
-      const accounts = (await c.query(
-        'select id, name, is_emergency from account where household_id = $1',
-        [u.household_id],
-      )).rows;
-      const byId = new Map(accounts.map((a) => [a.id, a]));
-
-      let accountId = b.account_id;
-      let toAccountId = null;
-      let categoryId = null;
-      let category = null;
-
+      let forcedAccountId = null;
       if (b.from_emergency) {
         if (b.kind !== 'expense') throw new HttpError(400, 'Hanya pengeluaran yang bisa diambil dari rekening darurat.');
-        const em = accounts.find((a) => a.is_emergency);
+        const em = (await c.query('select id from account where household_id = $1 and is_emergency', [u.household_id])).rows[0];
         if (!em) throw new HttpError(400, 'Rekening darurat belum diatur.');
-        accountId = em.id;
+        forcedAccountId = em.id;
       }
-      if (!byId.has(accountId)) throw new HttpError(400, 'Pilih rekening.');
-
-      if (b.kind === 'transfer') {
-        toAccountId = b.to_account_id;
-        if (!byId.has(toAccountId)) throw new HttpError(400, 'Pilih rekening tujuan.');
-        if (toAccountId === accountId) throw new HttpError(400, 'Rekening asal dan tujuan harus berbeda.');
-      } else {
-        const cat = await c.query(
-          'select id, name, kind from category where id = $1 and household_id = $2',
-          [b.category_id, u.household_id],
-        );
-        category = cat.rows[0];
-        if (!category) throw new HttpError(400, 'Pilih kategori.');
-        if (category.kind !== b.kind) throw new HttpError(400, 'Kategori tidak cocok dengan jenis transaksi.');
-        categoryId = category.id;
-      }
-
-      const start = category?.name === SALARY_CATEGORY
-        ? salaryCycleStart(b.trx_date, u.payday_dom)
-        : cycleStart(b.trx_date, u.payday_dom);
+      const { accountId, toAccountId, categoryId, category } = await resolveTarget(c, u, b, { forcedAccountId });
+      const start = cycleFor(b.trx_date, category, u.payday_dom);
       const cycleId = await ensureCycle(c, u.household_id, start);
 
-      const note = b.note?.trim() || null;
       const { rows } = await c.query(
         `insert into trx (account_id, to_account_id, category_id, cycle_id, user_id,
                           trx_date, kind, amount, note, is_one_off)
          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          returning id`,
         [accountId, toAccountId, categoryId, cycleId, u.id,
-          b.trx_date, b.kind, b.amount, note, b.kind === 'expense' && b.is_one_off],
+          b.trx_date, b.kind, b.amount, b.note?.trim() || null, b.kind === 'expense' && b.is_one_off],
       );
       const id = rows[0].id;
-
       if (b.from_emergency) {
-        await c.query(
-          'insert into emergency_debt (withdrawal_trx_id, amount) values ($1, $2)',
-          [id, b.amount],
-        );
+        await c.query('insert into emergency_debt (withdrawal_trx_id, amount) values ($1, $2)', [id, b.amount]);
       }
 
       const daily = b.kind === 'expense'
@@ -153,6 +163,76 @@ export default async function trxRoutes(app) {
     });
 
     return reply.code(201).send(result);
+  });
+
+  // Ubah transaksi. Semua anggota boleh (SPEC); pengubah terakhir dicatat.
+  //  - Penarikan rekening darurat (punya utang) dan pembayaran tagihan: jenisnya terkunci;
+  //    penarikan juga terkunci rekeningnya. Jumlah penarikan yang utangnya sudah lunas terkunci.
+  //  - Transfer pelunasan utang darurat tidak bisa diubah (batalkan dari layar Rekening darurat).
+  app.put('/api/trx/:id', {
+    schema: {
+      params: { type: 'object', properties: { id: uuid }, required: ['id'] },
+      body: { type: 'object', required: ['kind', 'amount', 'trx_date'], additionalProperties: false, properties: trxBody },
+    },
+  }, async (req) => {
+    const u = req.user;
+    const b = req.body;
+    if (!isValidDate(b.trx_date)) throw new HttpError(400, 'Tanggal tidak valid.');
+
+    return withTx(pool, async (c) => {
+      const { rows } = await c.query(
+        `select t.id, t.kind, t.amount, t.account_id, t.to_account_id,
+                ed.id as debt_id, ed.status as debt_status, ed.amount as debt_amount,
+                (select count(*) from emergency_debt r where r.repayment_trx_id = t.id)::int as repays,
+                o.id as occ_id, opc.start_date as occ_cycle_start
+           from trx t
+           join account a on a.id = t.account_id
+           left join emergency_debt ed on ed.withdrawal_trx_id = t.id
+           left join bill_occurrence o on o.transaction_id = t.id
+           left join pay_cycle opc on opc.id = o.cycle_id
+          where t.id = $1 and a.household_id = $2 and t.deleted_at is null
+          for update of t`,
+        [req.params.id, u.household_id],
+      );
+      const t = rows[0];
+      if (!t) throw new HttpError(404, 'Transaksi tidak ditemukan.');
+      if (t.repays > 0) throw new HttpError(409, 'Ini pelunasan utang darurat. Batalkan lalu catat ulang dari layar Rekening darurat.');
+
+      const withdrawal = !!t.debt_id;
+      if ((withdrawal || t.occ_id) && b.kind !== t.kind) throw new HttpError(400, 'Jenis transaksi ini tidak bisa diubah.');
+      if (withdrawal && t.debt_status === 'paid' && b.amount !== t.amount) {
+        throw new HttpError(409, 'Utang darurat ini sudah dilunasi, jadi jumlahnya tidak bisa diubah. Batalkan pelunasannya dulu.');
+      }
+
+      const { accountId, toAccountId, categoryId, category } = await resolveTarget(c, u, b, withdrawal
+        ? { forcedAccountId: t.account_id, forcedToAccountId: t.to_account_id } : {});
+
+      let start = cycleFor(b.trx_date, category, u.payday_dom);
+      // Pembayaran tagihan tetap di siklus tagihannya bila dibayar lebih awal (sama seperti saat membayar).
+      if (t.occ_id && t.occ_cycle_start > start) start = t.occ_cycle_start;
+      const cycleId = await ensureCycle(c, u.household_id, start);
+
+      await c.query(
+        `update trx set account_id = $2, to_account_id = $3, category_id = $4, cycle_id = $5, trx_date = $6,
+                kind = $7, amount = $8, note = $9, is_one_off = $10, updated_by = $11, updated_at = now()
+          where id = $1`,
+        [t.id, accountId, toAccountId, categoryId, cycleId, b.trx_date, b.kind, b.amount,
+          b.note?.trim() || null, b.kind === 'expense' && b.is_one_off, u.id],
+      );
+
+      // Utang yang masih terbuka ikut berubah sebesar selisih jumlahnya.
+      if (withdrawal && t.debt_status === 'open' && b.amount !== t.amount) {
+        const next = t.debt_amount + (b.amount - t.amount);
+        if (next <= 0) throw new HttpError(400, 'Jumlah terlalu kecil: sebagian utang ini sudah dilunasi.');
+        await c.query('update emergency_debt set amount = $2 where id = $1', [t.debt_id, next]);
+      }
+
+      const daily = b.kind === 'expense'
+        ? (await dailyBudgets(c, u.household_id, b.trx_date, categoryId))[0] ?? null
+        : null;
+      const item = (await c.query(`${LIST_SQL} and t.id = $2`, [u.household_id, t.id])).rows[0];
+      return { item, cycle: { start, label: cycleLabel(start) }, daily_budget: daily };
+    });
   });
 
   // Hapus lunak. Penarikan darurat yang belum lunas ikut menghapus utangnya;

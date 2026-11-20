@@ -380,3 +380,8 @@ a.avatar { display: inline-flex; align-items: center; justify-content: center; t
 .small-note { padding: 12px 14px; gap: 4px; border-radius: var(--radius); }
 .link-row { color: var(--text); text-decoration: none; }
 .danger-row { color: var(--danger); font-weight: 500; border-bottom: none; }
+
+/* Ubah transaksi */
+a.edit-link { color: inherit; text-decoration: none; flex: 1; min-width: 0; min-height: 44px; justify-content: center; }
+a.edit-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 6px; }
+.btn-text.danger { color: var(--danger); width: 100%; margin-top: 4px; }

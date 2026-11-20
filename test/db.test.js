@@ -606,3 +606,70 @@ test('impor catatan lama: tulis, hitung, tolak ganda, batalkan tanpa menyentuh t
   assert.equal(await count('select count(*)::int n from trx'), before);
   assert.equal(await count(`select count(*)::int n from emergency_debt d join trx w on w.id = d.withdrawal_trx_id where w.import_batch = 'tes-impor'`), 0);
 });
+
+test('ubah transaksi: bidang, siklus, jejak pengubah, dan yang dikunci', { skip }, async () => {
+  const m = (await app.inject({ url: '/api/meta', cookies: { sid } })).json();
+  const put = (id, payload, token = sid) => app.inject({ method: 'PUT', url: `/api/trx/${id}`, cookies: { sid: token }, payload });
+  const get = async (id) => (await app.inject({ url: `/api/trx/${id}`, cookies: { sid } })).json().item;
+
+  // Pengeluaran biasa: ubah jumlah, tanggal (pindah siklus), kategori, catatan, sekali bayar.
+  const made = await post({ kind: 'expense', amount: 100000, trx_date: '2026-11-16', account_id: acc['Rek. utama'],
+    category_id: cat['Belanja'], note: 'salah' });
+  const id = made.json().item.id;
+  const edited = await put(id, { kind: 'expense', amount: 150000, trx_date: '2026-11-26', account_id: acc['Rek. utama'],
+    category_id: cat['Hiburan'], note: 'benar', is_one_off: true });
+  assert.equal(edited.statusCode, 200, edited.body);
+  const it = edited.json().item;
+  assert.deepEqual([it.amount, it.trx_date, it.category_name, it.note, it.is_one_off, it.updated_by],
+    [150000, '2026-11-26', 'Hiburan', 'benar', true, 'Erik']);
+  assert.ok(it.updated_at);
+  assert.equal(edited.json().cycle.start, '2026-11-25'); // tanggal baru ada di siklus berikutnya
+  assert.equal(it.recorded_by, 'Erik'); // pencatat awal tetap
+
+  // Jenis boleh pindah: pengeluaran -> Tabung (transfer ke rekening aset) -> pemasukan.
+  const toSaving = await put(id, { kind: 'transfer', amount: 150000, trx_date: '2026-11-26', account_id: acc['Rek. utama'], to_account_id: acc['Saham'] });
+  assert.equal(toSaving.statusCode, 200, toSaving.body);
+  const sv = await get(id);
+  assert.deepEqual([sv.kind, sv.category_id, sv.to_account_name, sv.is_one_off], ['transfer', null, 'Saham', false]);
+  const toIncome = await put(id, { kind: 'income', amount: 150000, trx_date: '2026-11-26', account_id: acc['Rek. utama'], category_id: cat['Bonus'] });
+  assert.equal(toIncome.statusCode, 200);
+  assert.equal((await get(id)).to_account_id, null);
+
+  // Validasi sama seperti saat mencatat.
+  assert.equal((await put(id, { kind: 'expense', amount: 1, trx_date: '2026-11-26', account_id: acc['Rek. utama'], category_id: cat['Gaji'] })).statusCode, 400);
+  assert.equal((await put(id, { kind: 'income', amount: 1, trx_date: '2026-02-30', account_id: acc['Rek. utama'], category_id: cat['Gaji'] })).statusCode, 400);
+  assert.equal((await put('00000000-0000-4000-8000-000000000000', { kind: 'income', amount: 1, trx_date: '2026-11-26', account_id: acc['Rek. utama'], category_id: cat['Gaji'] })).statusCode, 404);
+
+  // Gaji yang diubah tanggalnya tetap masuk siklus gajiannya.
+  const gaji = await post({ kind: 'income', amount: 1000, trx_date: '2026-09-25', account_id: acc['Rek. utama'], category_id: cat['Gaji'] });
+  const gaji2 = await put(gaji.json().item.id, { kind: 'income', amount: 1000, trx_date: '2026-10-24', account_id: acc['Rek. utama'], category_id: cat['Gaji'] });
+  assert.equal(gaji2.json().cycle.start, '2026-10-25');
+
+  // Penarikan darurat: jumlah ikut mengubah utang yang terbuka; jenis dan rekening terkunci.
+  const wd = await post({ kind: 'expense', amount: 300000, trx_date: m.today, account_id: acc['Rek. utama'], category_id: cat['Kesehatan'], from_emergency: true });
+  const wdId = wd.json().item.id;
+  const wdPut = await put(wdId, { kind: 'expense', amount: 450000, trx_date: m.today, account_id: acc['Rek. utama'], category_id: cat['Kesehatan'] });
+  assert.equal(wdPut.statusCode, 200, wdPut.body);
+  assert.equal(wdPut.json().item.account_name, 'Rekening darurat'); // rekening tetap, walau body mengirim Rek. utama
+  assert.equal((await pool.query('select amount from emergency_debt where withdrawal_trx_id = $1', [wdId])).rows[0].amount, 450000);
+  assert.equal((await put(wdId, { kind: 'income', amount: 450000, trx_date: m.today, account_id: acc['Rek. utama'], category_id: cat['Bonus'] })).statusCode, 400);
+
+  // Utang yang sudah lunas: jumlah terkunci, catatan masih bisa; pelunasan itu sendiri tidak bisa diubah.
+  const debtId = (await pool.query('select id from emergency_debt where withdrawal_trx_id = $1', [wdId])).rows[0].id;
+  const repay = await app.inject({ method: 'POST', url: '/api/emergency/repay', cookies: { sid },
+    payload: { debt_ids: [debtId], account_id: acc['Rek. utama'], trx_date: m.today } });
+  assert.equal(repay.statusCode, 201, repay.body);
+  assert.equal((await put(wdId, { kind: 'expense', amount: 1000, trx_date: m.today, account_id: acc['Rek. utama'], category_id: cat['Kesehatan'] })).statusCode, 409);
+  assert.equal((await put(wdId, { kind: 'expense', amount: 450000, trx_date: m.today, account_id: acc['Rek. utama'], category_id: cat['Kesehatan'], note: 'obat' })).statusCode, 200);
+  const repayPut = await put(repay.json().trx_id, { kind: 'transfer', amount: 1, trx_date: m.today, account_id: acc['Rek. utama'], to_account_id: acc['Rekening darurat'] });
+  assert.equal(repayPut.statusCode, 409);
+  await app.inject({ method: 'DELETE', url: `/api/emergency/repayments/${repay.json().trx_id}`, cookies: { sid } });
+
+  // Anak boleh mengubah (SPEC: semua anggota boleh ubah dan hapus).
+  const anak = (await pool.query(`select id from app_user where role = 'anak'`)).rows[0];
+  const token = newSessionToken();
+  await pool.query(`insert into session (token_hash, user_id, expires_at) values ($1, $2, now() + interval '1 day')`, [hashToken(token), anak.id]);
+  const byKid = await put(id, { kind: 'income', amount: 200000, trx_date: '2026-11-26', account_id: acc['Rek. utama'], category_id: cat['Bonus'] }, token);
+  assert.equal(byKid.statusCode, 200);
+  assert.equal(byKid.json().item.updated_by, (await pool.query('select name from app_user where id = $1', [anak.id])).rows[0].name);
+});

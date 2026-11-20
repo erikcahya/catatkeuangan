@@ -120,11 +120,13 @@ function trxLine(t, { withDelete = true } = {}) {
   const where = t.kind === 'transfer'
     ? `${moveLabel} · ${t.account_name} → ${t.to_account_name}`
     : t.is_emergency_withdrawal ? `${t.category_name} · utang ke rekening darurat` : `${t.category_name} · ${t.account_name}`;
+  // Menekan baris membuka halaman ubah; pelunasan utang darurat diubah dari layar Rekening darurat.
+  const href = t.is_repayment ? '#/darurat' : `#/ubah/${esc(t.id)}`;
   return `<li class="trx-item">
-    <div class="main">
+    <a class="main edit-link" href="${href}" aria-label="${t.is_repayment ? 'Buka rekening darurat' : 'Ubah'}: ${esc(name)}">
       <span class="name">${esc(name)}</span>
       <span class="meta${t.is_emergency_withdrawal ? ' warn' : ''}">${esc(where)} · ${esc(tanggal(t.trx_date))} · oleh ${esc(t.recorded_by)}</span>
-    </div>
+    </a>
     <div class="right">
       <span class="amt${t.kind === 'income' ? ' in' : ''}">${sign}${rupiah(t.amount)}</span>
       ${withDelete ? `<button class="del" data-del="${esc(t.id)}" aria-label="Hapus ${esc(name)}">${ICON.trash}</button>` : ''}
@@ -310,7 +312,19 @@ async function renderAdd(preset = {}) {
   const assets = m.accounts.filter((a) => a.kind === 'asset');
   const nonAsset = m.accounts.filter((a) => a.kind !== 'asset');
   const kinds = Object.entries(KIND_LABEL).filter(([k]) => k !== 'saving' || assets.length);
-  const state = { kind: preset.kind ?? 'expense' };
+  // Mode ubah: preset.edit = transaksi dari GET /api/trx/:id. Yang punya utang darurat atau
+  // tertaut ke tagihan terkunci jenisnya; penarikan darurat juga terkunci rekeningnya.
+  const edit = preset.edit ?? null;
+  const lockKind = !!edit && (edit.is_emergency_withdrawal || edit.is_bill_payment
+    || (edit.kind === 'transfer' && edit.to_account_kind !== 'asset'));
+  const lockAccounts = !!edit && edit.is_emergency_withdrawal;
+  const editKind = !edit ? null : edit.kind === 'transfer' ? (edit.to_account_kind === 'asset' ? 'saving' : 'transfer') : edit.kind;
+  const lockNote = !edit ? '' : edit.is_emergency_withdrawal
+    ? (edit.debt_status === 'paid'
+      ? 'Penarikan rekening darurat ini sudah dilunasi, jadi jumlah, jenis, dan rekeningnya tidak bisa diubah.'
+      : 'Penarikan rekening darurat: jenis dan rekeningnya tidak bisa diubah. Mengubah jumlah ikut mengubah utangnya.')
+    : edit.is_bill_payment ? 'Ini pembayaran tagihan berulang, jadi jenisnya tidak bisa diubah.' : '';
+  const state = { kind: editKind ?? preset.kind ?? 'expense' };
   const back = preset.back ?? '#/';
 
   const options = (list, selected) => list
@@ -323,10 +337,11 @@ async function renderAdd(preset = {}) {
         <h1 class="title">${esc(preset.title ?? 'Tambah transaksi')}</h1>
         <a class="icon-btn" href="${back}" aria-label="Tutup">${ICON.close}</a>
       </div>
-      <div class="segmented${kinds.length === 2 ? ' two' : ''}" role="group" aria-label="Jenis transaksi">
+      ${lockKind ? '' : `<div class="segmented${kinds.length === 2 ? ' two' : ''}" role="group" aria-label="Jenis transaksi">
         ${kinds.map(([k, label]) =>
           `<button type="button" data-kind="${k}" aria-pressed="${k === state.kind}">${label}</button>`).join('')}
-      </div>
+      </div>`}
+      ${lockNote ? `<div class="note-box">${esc(lockNote)}</div>` : ''}
       <div id="add-err" class="error" hidden></div>
       <div class="card field amount">
         <label for="amount">Jumlah</label>
@@ -355,8 +370,12 @@ async function renderAdd(preset = {}) {
         </div>
         <div class="row">
           <span class="label">Dicatat oleh</span>
-          <span class="value">${esc(m.user.name)}</span>
+          <span class="value">${esc(edit ? edit.recorded_by : m.user.name)}</span>
         </div>
+        ${edit?.updated_by ? `<div class="row">
+          <span class="label">Terakhir diubah oleh</span>
+          <span class="value">${esc(edit.updated_by)}</span>
+        </div>` : ''}
       </div>
       <div class="card field">
         <label for="note">Catatan</label>
@@ -367,7 +386,7 @@ async function renderAdd(preset = {}) {
           <span>Pengeluaran sekali bayar</span>
           <input type="checkbox" name="is_one_off">
         </label>
-        ${emergency ? `<label class="row toggle emergency">
+        ${emergency && !edit ? `<label class="row toggle emergency">
           <span class="text">
             <span>Ambil dari rekening darurat</span>
             <span class="hint">Dicatat sebagai utang, dilunasi saat gajian</span>
@@ -376,7 +395,10 @@ async function renderAdd(preset = {}) {
         </label>` : ''}
       </div>
     </div>
-    <div class="footer"><button class="btn-primary" type="submit">Simpan transaksi</button></div>
+    <div class="footer">
+      <button class="btn-primary" type="submit">${edit ? 'Simpan perubahan' : 'Simpan transaksi'}</button>
+      ${edit ? '<button type="button" class="btn-text danger" id="del-trx">Hapus transaksi</button>' : ''}
+    </div>
   </form>`;
 
   const form = document.getElementById('add-form');
@@ -389,7 +411,7 @@ async function renderAdd(preset = {}) {
     const cats = m.categories.filter((c) => c.kind === k);
     const prev = form.category.value;
     form.category.innerHTML = options(cats, cats.some((c) => c.id === prev) ? prev : cats[0]?.id);
-    const fromEm = k === 'expense' && form.from_emergency?.checked;
+    const fromEm = k === 'expense' && (edit?.is_emergency_withdrawal || form.from_emergency?.checked);
     const moving = k === 'transfer' || k === 'saving';
     show('row-category', !moving);
     show('row-to', moving);
@@ -420,7 +442,30 @@ async function renderAdd(preset = {}) {
     form.amount.value = n ? rupiah(n) : '';
   });
   sync();
-  form.amount.focus();
+  if (edit) {
+    // Isi form dengan transaksi yang diubah, lalu sinkronkan lagi agar pilihan tidak tertimpa.
+    form.amount.value = rupiah(edit.amount);
+    form.trx_date.value = edit.trx_date;
+    form.note.value = edit.note ?? '';
+    form.is_one_off.checked = !!edit.is_one_off;
+    if (edit.category_id && form.category.querySelector(`option[value="${edit.category_id}"]`)) form.category.value = edit.category_id;
+    if (form.account.querySelector(`option[value="${edit.account_id}"]`)) form.account.value = edit.account_id;
+    if (edit.to_account_id && form.to_account.querySelector(`option[value="${edit.to_account_id}"]`)) form.to_account.value = edit.to_account_id;
+    if (lockAccounts && state.kind === 'transfer') { form.account.disabled = true; form.to_account.disabled = true; }
+    if (edit.is_emergency_withdrawal && edit.debt_status === 'paid') form.amount.readOnly = true;
+    sync();
+  }
+  document.getElementById('del-trx')?.addEventListener('click', async () => {
+    if (!confirm('Hapus transaksi ini?')) return;
+    try {
+      await api(`/api/trx/${edit.id}`, { method: 'DELETE' });
+      toast('Transaksi dihapus.');
+      location.hash = back;
+    } catch (ex) {
+      toast(ex.message, { warn: true });
+    }
+  });
+  if (!edit) form.amount.focus();
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -446,16 +491,17 @@ async function renderAdd(preset = {}) {
       is_one_off: isExpense && form.is_one_off.checked,
       from_emergency: isExpense && !!form.from_emergency?.checked,
     };
+    if (edit) delete body.from_emergency; // penarikan darurat tidak bisa diubah-ubah lewat ubah
     const btn = form.querySelector('[type="submit"]');
     btn.disabled = true;
     try {
-      const res = await api('/api/trx', { method: 'POST', body });
+      const res = await api(edit ? `/api/trx/${edit.id}` : '/api/trx', { method: edit ? 'PUT' : 'POST', body });
       location.hash = back;
       const d = res.daily_budget;
       if (d && d.over > 0) {
         toast(`Budget makan ${tanggal(d.date)} terlewati ${rupiah(d.over)} (total ${rupiah(d.total)} dari ${rupiah(d.limit)}).`, { warn: true });
       } else {
-        toast(`Tersimpan di siklus ${res.cycle.label}.`);
+        toast(edit ? 'Perubahan disimpan.' : `Tersimpan di siklus ${res.cycle.label}.`);
       }
     } catch (ex) {
       btn.disabled = false;
@@ -1415,11 +1461,27 @@ async function renderOwnPassword() {
   });
 }
 
+/** Halaman ubah transaksi: memakai form Tambah transaksi yang sudah terisi. */
+async function renderEdit(id) {
+  await loadMeta();
+  const { item } = await api(`/api/trx/${id}`);
+  if (item.is_repayment) {
+    app.innerHTML = `<div class="screen"><div class="screen-body">
+      ${backHeader('Transaksi', 'Pelunasan rekening darurat', '#/transaksi')}
+      <div class="note-box">Ini pelunasan utang rekening darurat. Untuk mengubahnya, batalkan pelunasan di layar Rekening darurat, lalu catat ulang.</div>
+      <a class="btn-primary as-link" href="#/darurat">Buka rekening darurat</a>
+    </div></div>`;
+    return;
+  }
+  return renderAdd({ edit: item, title: 'Ubah transaksi', back: '#/transaksi' });
+}
+
 // ---------- Router ----------
 
 const routes = [
   [/^(#\/?)?$/, renderHome],
   [/^#\/tambah$/, renderAdd],
+  [/^#\/ubah\/([0-9a-f-]{36})$/, (id) => renderEdit(id)],
   [/^#\/login$/, renderLogin],
   [/^#\/darurat$/, renderEmergency],
   [/^#\/laporan$/, renderReport],
