@@ -55,6 +55,8 @@ Ditandai: **[pasti]** = disebut langsung oleh pemilik; **[asumsi]** = tafsiran s
 ### Budget makan harian
 - **[pasti]** Kategori Makan dan Minum: Rp300.000 hari kerja, Rp200.000 akhir pekan. Ada peringatan bila total hari itu melebihi batas.
 - Tabel `daily_budget`. Total hari ini adalah jumlah transaksi pengeluaran kategori itu pada tanggal tersebut yang belum dihapus.
+- Batas harian bisa diatur dari Pengaturan (avatar di Beranda) > Batas budget harian: per kategori pengeluaran, hari kerja dan akhir pekan terpisah, boleh salah satu kosong.
+- **Anggaran per kategori**: Pengaturan > Anggaran per kategori. Disimpan di `budget_default` (satu nilai per kategori, per siklus gajian) dan berlaku untuk semua siklus, termasuk yang lama; baris di tabel `budget` (per siklus) bila ada menimpanya. Tampil di Laporan sebagai "terpakai / anggaran". Hanya anggota yang boleh melihat laporan yang bisa mengaturnya.
 - **[asumsi]** Hari kerja = Senin sampai Jumat, dihitung dengan zona waktu Asia/Jakarta.
 
 ### Anggota dan izin
@@ -106,4 +108,3 @@ Berkas sumber: laporan Excel "ec.financial planning_report" (25 Feb 2023 sampai 
 
 ## Belum diputuskan
 - Undangan lewat email (butuh layanan pengirim email). Untuk sekarang suami/istri menambah anggota dan mengatur email + kata sandinya di layar Anggota keluarga; `npm run set-login` tetap ada untuk akun pertama.
-- Layar pengaturan batas budget harian.

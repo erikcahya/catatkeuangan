@@ -1083,6 +1083,7 @@ async function renderReport() {
           <h2 class="daily-title">Per kategori</h2>
           <span class="tile-label">${r.expense_by_category.some((c) => c.budget != null) ? 'Terpakai / anggaran' : 'Porsi dari pengeluaran'}</span>
         </div>
+        <a class="see-all start" href="#/anggaran">${r.expense_by_category.some((c) => c.budget != null) ? 'Atur anggaran' : 'Atur anggaran per kategori'}</a>
         ${r.expense_by_category.length
           ? `<ul class="cats">${r.expense_by_category.map(catRow).join('')}</ul>`
           : '<p class="empty">Belum ada pengeluaran di siklus ini.</p>'}
@@ -1322,6 +1323,10 @@ async function renderMembers() {
         <span class="daily-title">Jejak perubahan</span>
         <span class="rules-text">Karena semua bisa mengubah dan menghapus, tiap transaksi menyimpan pencatat awal dan pengubah terakhir.</span>
       </section>
+      ${meta?.user.can_view_reports ? `<div class="card rows">
+        <a class="row link-row" href="#/anggaran"><span>Anggaran per kategori</span>${ICON.next}</a>
+        <a class="row link-row" href="#/budget-harian"><span>Batas budget harian</span>${ICON.next}</a>
+      </div>` : ''}
       <div class="card rows">
         <a class="row link-row" href="#/anggota/${esc(d.me)}/sandi"><span>Ganti kata sandi saya</span>${ICON.next}</a>
         <button type="button" class="row link-row as-button danger-row" id="logout"><span>Keluar</span></button>
@@ -1461,6 +1466,141 @@ async function renderOwnPassword() {
   });
 }
 
+// ---------- Pengaturan anggaran ----------
+
+/** Kolom rupiah yang diformat saat diketik; kosong = tidak ada nilai. */
+function bindMoneyInputs(root) {
+  root.querySelectorAll('input[data-money]').forEach((inp) => inp.addEventListener('input', () => {
+    const n = parseRupiah(inp.value);
+    inp.value = inp.value.trim() && n ? rupiah(n) : '';
+  }));
+}
+const moneyValue = (inp) => (inp.value.trim() ? parseRupiah(inp.value) : null);
+
+async function renderBudgets() {
+  const m = await loadMeta();
+  if (!m.user.can_view_reports) { location.hash = '#/'; return; }
+  const d = await api('/api/budgets');
+
+  app.innerHTML = `<form class="screen" id="budget-form" novalidate>
+    <div class="screen-body">
+      ${backHeader('Pengaturan', 'Anggaran per kategori', '#/anggota')}
+      <p class="rules-text">Batas pengeluaran per siklus gajian, berlaku untuk semua bulan dan tampil di Laporan sebagai
+        "terpakai / anggaran". Kosongkan kolom bila kategori itu tidak dianggarkan.</p>
+      <div id="b-err" class="error" hidden></div>
+      <div class="card rows">
+        ${d.items.map((x) => `<div class="row">
+          <label for="b-${esc(x.category_id)}">${esc(x.name)}</label>
+          <input class="money-input" id="b-${esc(x.category_id)}" data-money data-cat="${esc(x.category_id)}" data-orig="${x.limit ?? ''}"
+            inputmode="numeric" autocomplete="off" placeholder="Tanpa anggaran" value="${x.limit == null ? '' : rupiah(x.limit)}">
+        </div>`).join('')}
+      </div>
+      <div class="card rows"><div class="row"><span class="label">Total anggaran</span><span class="value" id="b-total">${rupiah(d.total)}</span></div></div>
+    </div>
+    <div class="footer"><button class="btn-primary" type="submit">Simpan anggaran</button></div>
+  </form>`;
+
+  const f = document.getElementById('budget-form');
+  const inputs = [...f.querySelectorAll('[data-cat]')];
+  bindMoneyInputs(f);
+  const total = () => document.getElementById('b-total').textContent = rupiah(inputs.reduce((s, i) => s + (moneyValue(i) ?? 0), 0));
+  inputs.forEach((i) => i.addEventListener('input', total));
+
+  f.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = f.querySelector('[type="submit"]');
+    btn.disabled = true;
+    try {
+      // Hanya yang berubah dikirim.
+      const items = inputs.filter((i) => String(moneyValue(i) ?? '') !== i.dataset.orig)
+        .map((i) => ({ category_id: i.dataset.cat, limit: moneyValue(i) }));
+      if (items.length) await api('/api/budgets', { method: 'PUT', body: { items } });
+      toast(items.length ? 'Anggaran disimpan.' : 'Tidak ada yang berubah.');
+      location.hash = '#/anggota';
+    } catch (ex) {
+      btn.disabled = false;
+      const err = document.getElementById('b-err');
+      err.textContent = ex.message;
+      err.hidden = false;
+    }
+  });
+}
+
+async function renderDailyBudgets() {
+  const m = await loadMeta();
+  if (!m.user.can_view_reports) { location.hash = '#/'; return; }
+  const d = await api('/api/budgets/daily');
+  const rows = d.items.map((x) => ({ ...x }));
+  const removed = new Set();
+  const expenseCats = m.categories.filter((c) => c.kind === 'expense');
+
+  function draw() {
+    const free = expenseCats.filter((c) => !rows.some((r) => r.category_id === c.id));
+    app.innerHTML = `<form class="screen" id="daily-form" novalidate>
+      <div class="screen-body">
+        ${backHeader('Pengaturan', 'Batas budget harian', '#/anggota')}
+        <p class="rules-text">Peringatan muncul di Beranda dan saat mencatat bila total pengeluaran kategori itu dalam satu hari
+          melebihi batas. Hari kerja Senin–Jumat, akhir pekan Sabtu–Minggu (zona waktu Jakarta).</p>
+        <div id="d-err" class="error" hidden></div>
+        ${rows.length ? rows.map((r, i) => `<section class="card member" aria-label="${esc(r.name)}">
+          <div class="daily-head"><span class="member-name">${esc(r.name)}</span>
+            <button type="button" class="btn-text small" data-remove="${i}" aria-label="Hapus batas ${esc(r.name)}">Hapus</button></div>
+          <div class="card rows">
+            <div class="row"><label for="d-wd-${i}">Hari kerja</label>
+              <input class="money-input" id="d-wd-${i}" data-money data-i="${i}" data-f="weekday" inputmode="numeric" placeholder="Tanpa batas" value="${r.weekday == null ? '' : rupiah(r.weekday)}"></div>
+            <div class="row"><label for="d-we-${i}">Akhir pekan</label>
+              <input class="money-input" id="d-we-${i}" data-money data-i="${i}" data-f="weekend" inputmode="numeric" placeholder="Tanpa batas" value="${r.weekend == null ? '' : rupiah(r.weekend)}"></div>
+          </div>
+        </section>`).join('') : '<p class="empty">Belum ada batas harian.</p>'}
+        ${free.length ? `<div class="card rows"><div class="row"><label for="d-add">Tambah kategori</label>
+          <select id="d-add"><option value="">Pilih…</option>${free.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select></div></div>` : ''}
+      </div>
+      <div class="footer"><button class="btn-primary" type="submit">Simpan batas harian</button></div>
+    </form>`;
+
+    const f = document.getElementById('daily-form');
+    bindMoneyInputs(f);
+    const keep = () => f.querySelectorAll('[data-i]').forEach((inp) => { rows[Number(inp.dataset.i)][inp.dataset.f] = moneyValue(inp); });
+    f.querySelectorAll('[data-remove]').forEach((b) => b.addEventListener('click', () => {
+      keep();
+      const [gone] = rows.splice(Number(b.dataset.remove), 1);
+      removed.add(gone.category_id);
+      draw();
+    }));
+    document.getElementById('d-add')?.addEventListener('change', (e) => {
+      if (!e.target.value) return;
+      keep();
+      const c = expenseCats.find((x) => x.id === e.target.value);
+      rows.push({ category_id: c.id, name: c.name, weekday: null, weekend: null });
+      removed.delete(c.id);
+      draw();
+      document.getElementById(`d-wd-${rows.length - 1}`)?.focus();
+    });
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      keep();
+      const btn = f.querySelector('[type="submit"]');
+      btn.disabled = true;
+      try {
+        for (const r of rows) {
+          await api('/api/budgets/daily', { method: 'PUT', body: { category_id: r.category_id, weekday: r.weekday, weekend: r.weekend } });
+        }
+        for (const id of removed) {
+          await api('/api/budgets/daily', { method: 'PUT', body: { category_id: id, weekday: null, weekend: null } });
+        }
+        toast('Batas harian disimpan.');
+        location.hash = '#/anggota';
+      } catch (ex) {
+        btn.disabled = false;
+        const err = document.getElementById('d-err');
+        err.textContent = ex.message;
+        err.hidden = false;
+      }
+    });
+  }
+  draw();
+}
+
 /** Halaman ubah transaksi: memakai form Tambah transaksi yang sudah terisi. */
 async function renderEdit(id) {
   await loadMeta();
@@ -1488,6 +1628,8 @@ const routes = [
   [/^#\/laporan\/kategori\/([0-9a-f-]{36})$/, (id) => renderCategory(id)],
   [/^#\/transaksi$/, renderTransactions],
   [/^#\/anggota$/, renderMembers],
+  [/^#\/anggaran$/, renderBudgets],
+  [/^#\/budget-harian$/, renderDailyBudgets],
   [/^#\/anggota\/baru$/, () => renderMemberForm(null)],
   [/^#\/anggota\/[0-9a-f-]{36}\/sandi$/, renderOwnPassword],
   [/^#\/anggota\/([0-9a-f-]{36})$/, (id) => renderMemberForm(id)],

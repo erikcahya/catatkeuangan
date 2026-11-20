@@ -17,7 +17,7 @@ let pool, app, sid, erik, acc, cat;
 before(async () => {
   if (skip) return;
   pool = createPool(url);
-  await pool.query(`truncate emergency_debt, bill_occurrence, recurring_bill, budget, savings_holding, trx, pay_cycle, session restart identity cascade`);
+  await pool.query(`truncate emergency_debt, bill_occurrence, recurring_bill, budget, budget_default, savings_holding, trx, pay_cycle, session restart identity cascade`);
   erik = (await pool.query(`select * from app_user where name = 'Erik'`)).rows[0];
   acc = Object.fromEntries((await pool.query('select name, id from account')).rows.map((r) => [r.name, r.id]));
   cat = Object.fromEntries((await pool.query('select name, id from category')).rows.map((r) => [r.name, r.id]));
@@ -672,4 +672,66 @@ test('ubah transaksi: bidang, siklus, jejak pengubah, dan yang dikunci', { skip 
   const byKid = await put(id, { kind: 'income', amount: 200000, trx_date: '2026-11-26', account_id: acc['Rek. utama'], category_id: cat['Bonus'] }, token);
   assert.equal(byKid.statusCode, 200);
   assert.equal(byKid.json().item.updated_by, (await pool.query('select name from app_user where id = $1', [anak.id])).rows[0].name);
+});
+
+test('anggaran: standar per kategori tampil di laporan, batas harian bisa diatur', { skip }, async () => {
+  const m = (await app.inject({ url: '/api/meta', cookies: { sid } })).json();
+  const putBudgets = (items) => app.inject({ method: 'PUT', url: '/api/budgets', cookies: { sid }, payload: { items } });
+  await pool.query('delete from budget'); // sisa anggaran siklus dari tes laporan di atas
+
+  // Mulai tanpa anggaran; semua kategori pengeluaran terdaftar.
+  let b = (await app.inject({ url: '/api/budgets', cookies: { sid } })).json();
+  assert.equal(b.items.length, 19);
+  assert.equal(b.total, 0);
+
+  assert.equal((await putBudgets([{ category_id: cat['Makan dan Minum'], limit: 6000000 }, { category_id: cat['Transportasi'], limit: 3500000 }])).statusCode, 200);
+  assert.equal((await putBudgets([{ category_id: cat['Gaji'], limit: 1 }])).statusCode, 400); // bukan kategori pengeluaran
+  b = (await app.inject({ url: '/api/budgets', cookies: { sid } })).json();
+  assert.equal(b.total, 9500000);
+  assert.deepEqual(b.items.slice(0, 2).map((x) => x.name), ['Makan dan Minum', 'Transportasi']); // yang berisi tampil duluan
+
+  // Berlaku di semua siklus, termasuk yang belum punya pengeluaran di kategori itu.
+  const rep = (await app.inject({ url: `/api/report?cycle=${m.cycle.start}`, cookies: { sid } })).json();
+  const trans = rep.expense_by_category.find((c) => c.name === 'Transportasi');
+  assert.equal(trans.budget, 3500000);
+  const old = (await app.inject({ url: '/api/report?cycle=2026-10-25', cookies: { sid } })).json();
+  assert.equal(old.expense_by_category.find((c) => c.name === 'Makan dan Minum').budget, 6000000);
+
+  // Anggaran khusus satu siklus (tabel budget) menimpa yang standar.
+  const pc = (await pool.query(`select id from pay_cycle where start_date = '2026-10-25'`)).rows[0];
+  await pool.query('insert into budget (cycle_id, category_id, limit_amount) values ($1, $2, 8000000)', [pc.id, cat['Makan dan Minum']]);
+  const over = (await app.inject({ url: '/api/report?cycle=2026-10-25', cookies: { sid } })).json();
+  assert.equal(over.expense_by_category.find((c) => c.name === 'Makan dan Minum').budget, 8000000);
+  await pool.query('delete from budget where cycle_id = $1', [pc.id]);
+
+  // Hapus anggaran.
+  await putBudgets([{ category_id: cat['Transportasi'], limit: null }]);
+  assert.equal((await app.inject({ url: '/api/budgets', cookies: { sid } })).json().total, 6000000);
+  await putBudgets([{ category_id: cat['Makan dan Minum'], limit: null }]);
+
+  // Batas harian: awalnya dari data awal (300rb kerja, 200rb akhir pekan).
+  const putDaily = (payload) => app.inject({ method: 'PUT', url: '/api/budgets/daily', cookies: { sid }, payload });
+  let d = (await app.inject({ url: '/api/budgets/daily', cookies: { sid } })).json().items;
+  assert.deepEqual(d.map((x) => [x.name, x.weekday, x.weekend]), [['Makan dan Minum', 300000, 200000]]);
+  assert.equal((await putDaily({ category_id: cat['Makan dan Minum'], weekday: 100000, weekend: 150000 })).statusCode, 200);
+  // Pengeluaran berikutnya diperiksa terhadap batas baru (Senin 16 Nov 2026).
+  const spend = await post({ kind: 'expense', amount: 120000, trx_date: '2026-11-16', account_id: acc['Rek. utama'], category_id: cat['Makan dan Minum'] });
+  assert.equal(spend.json().daily_budget.limit, 100000);
+  assert.ok(spend.json().daily_budget.over > 0);
+  // Tambah batas untuk kategori lain, hapus sebagian, lalu kembalikan.
+  assert.equal((await putDaily({ category_id: cat['Hiburan'], weekday: null, weekend: 400000 })).statusCode, 200);
+  d = (await app.inject({ url: '/api/budgets/daily', cookies: { sid } })).json().items;
+  assert.deepEqual(d.find((x) => x.name === 'Hiburan'), { category_id: cat['Hiburan'], name: 'Hiburan', weekday: null, weekend: 400000 });
+  await putDaily({ category_id: cat['Hiburan'], weekday: null, weekend: null });
+  assert.equal((await app.inject({ url: '/api/budgets/daily', cookies: { sid } })).json().items.length, 1);
+  await putDaily({ category_id: cat['Makan dan Minum'], weekday: 300000, weekend: 200000 });
+  assert.equal((await putDaily({ category_id: cat['Gaji'], weekday: 1, weekend: 1 })).statusCode, 400);
+
+  // Anak tidak bisa mengatur.
+  const anak = (await pool.query(`select id from app_user where role = 'anak'`)).rows[0];
+  const token = newSessionToken();
+  await pool.query(`insert into session (token_hash, user_id, expires_at) values ($1, $2, now() + interval '1 day')`, [hashToken(token), anak.id]);
+  assert.equal((await app.inject({ url: '/api/budgets', cookies: { sid: token } })).statusCode, 403);
+  assert.equal((await app.inject({ method: 'PUT', url: '/api/budgets/daily', cookies: { sid: token },
+    payload: { category_id: cat['Hiburan'], weekday: 1, weekend: 1 } })).statusCode, 403);
 });

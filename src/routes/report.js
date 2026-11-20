@@ -28,9 +28,14 @@ export default async function reportRoutes(app) {
             group by t.category_id, t.kind
          ),
          planned as (
-           select b.category_id, b.limit_amount
-             from budget b join pay_cycle pc on pc.id = b.cycle_id
-            where pc.household_id = $1 and pc.start_date = $2
+           -- anggaran siklus itu bila ada, kalau tidak anggaran standar kategori
+           select c.id as category_id, coalesce(cb.limit_amount, d.limit_amount) as limit_amount
+             from category c
+             left join budget_default d on d.category_id = c.id and d.household_id = c.household_id
+             left join (select b.category_id, b.limit_amount
+                          from budget b join pay_cycle pc on pc.id = b.cycle_id
+                         where pc.household_id = $1 and pc.start_date = $2) cb on cb.category_id = c.id
+            where c.household_id = $1 and coalesce(cb.limit_amount, d.limit_amount) is not null
          )
          select c.id as category_id, c.name, c.kind,
                 coalesce(s.total, 0) as total, coalesce(s.count, 0) as count,
