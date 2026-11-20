@@ -74,6 +74,11 @@ function toast(msg, { warn = false } = {}) {
   toastTimer = setTimeout(() => { toastEl.hidden = true; }, warn ? 6000 : 3000);
 }
 
+// Tombol aksi layar (footer) di atas menu bawah, menempel bersama di dasar layar.
+function dock(footerHtml, active) {
+  return `<div class="dock">${footerHtml ? `<div class="footer">${footerHtml}</div>` : ''}${tabbar(active)}</div>`;
+}
+
 function tabbar(active) {
   const link = (hash, label) =>
     `<a href="${hash}"${active === hash ? ' aria-current="page"' : ''}>${label}</a>`;
@@ -283,7 +288,7 @@ async function renderHome() {
       <div class="topbar">
         <div><div class="eyebrow">Siklus gajian</div><h1 class="title">${esc(s.cycle.label)}</h1></div>
         <div class="topbar-actions">
-          <a class="avatar" href="#/anggota" aria-label="Anggota keluarga, login sebagai ${esc(m.user.name)}">${esc(m.user.name[0] ?? '?')}</a>
+          <a class="avatar-pill" href="#/anggota" aria-label="Pengaturan, login sebagai ${esc(m.user.name)}"><span class="avatar">${esc(m.user.name[0] ?? '?')}</span>Pengaturan</a>
           ${cyclePicker}
         </div>
       </div>
@@ -630,7 +635,7 @@ async function renderBills() {
             <span class="amt${x.is_active ? '' : ' muted'}">${x.is_variable ? '± ' : ''}${rupiah(x.default_amount)}</span>
           </a></li>`).join('')}</ul>` : ''}
     </div>
-    <div class="footer"><a class="btn-outline" href="#/tagihan/baru">Tambah tagihan berulang</a></div>
+    ${dock('<a class="btn-outline" href="#/tagihan/baru">Tambah tagihan berulang</a>', '')}
   </div>
   <dialog id="pay-dialog" class="sheet" aria-labelledby="pay-title"></dialog>`;
 
@@ -1018,7 +1023,7 @@ async function renderSavings() {
       <p class="tile-label">Nilai sekarang diisi manual dan boleh dikosongkan; tekan aset untuk mengubahnya.
         Total setoran dihitung dari yang Anda tabung, dikurangi yang ditarik kembali.</p>
     </div>
-    ${s.assets.length ? '<div class="footer"><a class="btn-primary as-link" href="#/tabungan/setor">Tabung</a><a class="btn-text" href="#/tabungan/tarik">Tarik tabungan</a></div>' : ''}
+    ${dock(s.assets.length ? '<a class="btn-primary as-link" href="#/tabungan/setor">Tabung</a><a class="btn-text" href="#/tabungan/tarik">Tarik tabungan</a>' : '', '')}
   </div>
   <dialog id="value-dialog" class="sheet" aria-labelledby="value-title"></dialog>`;
 
@@ -1382,7 +1387,7 @@ async function renderMembers() {
         <button type="button" class="row link-row as-button danger-row" id="logout"><span>Keluar</span></button>
       </div>
     </div>
-    ${d.can_manage ? '<div class="footer"><a class="btn-outline" href="#/anggota/baru">Tambah anggota</a></div>' : ''}
+    ${dock(d.can_manage ? '<a class="btn-outline" href="#/anggota/baru">Tambah anggota</a>' : '', '')}
   </div>`;
 
   document.getElementById('logout').addEventListener('click', async () => {
@@ -1844,6 +1849,7 @@ async function route() {
     app.innerHTML = `<div class="screen"><div class="screen-body">
       <div class="error">${esc(ex.message)}</div>
       <button class="btn-primary" type="button" id="retry">Coba lagi</button>
+      <a class="btn-text" href="#/">Ke Beranda</a>
     </div></div>`;
     document.getElementById('retry').addEventListener('click', route);
   }
