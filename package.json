@@ -13,7 +13,8 @@
     "set-login": "node --env-file-if-exists=.env scripts/set-login.js",
     "test": "node --test",
     "test:db": "node --env-file-if-exists=.env --test test/db.test.js",
-    "import-old": "node --env-file-if-exists=.env scripts/import-old.js"
+    "import-old": "node --env-file-if-exists=.env scripts/import-old.js",
+    "reset-trx": "node --env-file-if-exists=.env scripts/reset-transactions.js"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.5",

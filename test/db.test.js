@@ -758,3 +758,61 @@ test('tarik tabungan: transfer dari rekening aset, bisa diubah dari pemasukan', 
   assert.equal(before.net_invested - after.net_invested, 900000);
   assert.equal(after.cycle_net - before.cycle_net, -900000);
 });
+
+test('reset transaksi: simulasi tidak mengubah apa pun, --sejak dan --semua menghapus yang tepat', { skip }, async () => {
+  const run = (...args) => execFileSync(process.execPath, ['scripts/reset-transactions.js', ...args],
+    { env: { ...process.env, DATABASE_URL: url }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const n = async (sql, p = []) => (await pool.query(sql, p)).rows[0].n;
+  const m = (await app.inject({ url: '/api/meta', cookies: { sid } })).json();
+
+  // Data uji: transaksi lama (dipertahankan oleh --sejak) dan baru, penarikan darurat berutang, tagihan terbayar.
+  const old = await post({ kind: 'expense', amount: 1000, trx_date: '2024-03-10', account_id: acc['Rek. utama'], category_id: cat['Belanja'] });
+  assert.equal(old.statusCode, 201);
+  const wd = await post({ kind: 'expense', amount: 5000, trx_date: '2026-11-12', account_id: acc['Rek. utama'], category_id: cat['Kesehatan'], from_emergency: true });
+  assert.equal(wd.statusCode, 201);
+  await pool.query('delete from bill_occurrence'); await pool.query('delete from recurring_bill');
+  const bill = await app.inject({ method: 'POST', url: '/api/bills', cookies: { sid }, payload: {
+    name: 'Reset Tes', category_id: cat['Tagihan'], account_id: acc['Rek. utama'], default_amount: 7000, due_dom: 20 } });
+  assert.equal(bill.statusCode, 201);
+  const occ = (await app.inject({ url: '/api/bills', cookies: { sid } })).json().items.find((o) => o.name === 'Reset Tes');
+  const paid = await app.inject({ method: 'POST', url: `/api/bills/occurrences/${occ.id}/pay`, cookies: { sid },
+    payload: { amount: 7000, trx_date: '2026-11-18', account_id: acc['Rek. utama'] } });
+  assert.equal(paid.statusCode, 201, paid.body);
+
+  const total0 = await n('select count(*)::int n from trx');
+  const recent0 = await n(`select count(*)::int n from trx where trx_date >= '2026-11-01'`);
+  assert.ok(recent0 >= 2 && total0 > recent0);
+
+  // Salah argumen ditolak; simulasi tidak mengubah apa pun.
+  assert.throws(() => run(), /Gagal/);
+  assert.throws(() => run('--semua', '--sejak', '2026-11-01'), /Gagal/);
+  assert.throws(() => run('--sejak', '2026-02-30'), /tidak valid/);
+  assert.match(run('--sejak', '2026-11-01'), /SIMULASI/);
+  assert.match(run('--semua'), /SIMULASI/);
+  assert.equal(await n('select count(*)::int n from trx'), total0);
+  assert.ok(await n('select count(*)::int n from emergency_debt') >= 1);
+
+  // --sejak: yang baru hilang beserta utangnya dan tagihan terbayarnya, yang lama tetap.
+  assert.match(run('--sejak', '2026-11-01', '--commit'), /Selesai/);
+  assert.equal(await n(`select count(*)::int n from trx where trx_date >= '2026-11-01'`), 0);
+  assert.equal(await n('select count(*)::int n from trx'), total0 - recent0);
+  assert.equal(await n(`select count(*)::int n from trx where trx_date = '2024-03-10'`), 1);
+  assert.equal(await n('select count(*)::int n from emergency_debt d join trx w on w.id = d.withdrawal_trx_id where w.trx_date >= $1', ['2026-11-01']), 0);
+  assert.equal(await n(`select count(*)::int n from bill_occurrence where status = 'paid'`), 0);
+
+  // Tagihan dibuat ulang otomatis sebagai belum dibayar.
+  const again = (await app.inject({ url: '/api/bills', cookies: { sid } })).json();
+  assert.equal(again.items.find((o) => o.name === 'Reset Tes').status, 'pending');
+
+  // --semua: tidak ada transaksi, utang, jadwal, maupun siklus; data master tetap.
+  const masters = [await n('select count(*)::int n from account'), await n('select count(*)::int n from category'),
+    await n('select count(*)::int n from app_user'), await n('select count(*)::int n from recurring_bill')];
+  assert.match(run('--semua', '--commit'), /Selesai/);
+  for (const t of ['trx', 'emergency_debt', 'bill_occurrence', 'pay_cycle']) assert.equal(await n(`select count(*)::int n from ${t}`), 0, t);
+  assert.deepEqual([await n('select count(*)::int n from account'), await n('select count(*)::int n from category'),
+    await n('select count(*)::int n from app_user'), await n('select count(*)::int n from recurring_bill')], masters);
+  // Aplikasi tetap jalan di database kosong.
+  const s = (await app.inject({ url: '/api/summary', cookies: { sid } })).json();
+  assert.deepEqual([s.totals.income, s.totals.expense, s.emergency.open_debt, s.emergency.filled], [0, 0, 0, 10000000]);
+  assert.equal(m.user.name, 'Erik');
+});

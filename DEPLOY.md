@@ -127,6 +127,19 @@ git pull
 docker compose up -d --build                 # migrasi baru dijalankan otomatis
 ```
 
+## Reset transaksi (tanpa menyentuh data lain)
+
+Menghapus transaksi saja. Rekening, kategori, anggota dan login, definisi tagihan, anggaran, dan batas harian tetap ada.
+Penghapusan permanen, jadi buat cadangan dulu (`sudo deploy/backup.sh`). Tanpa `--commit` hanya simulasi.
+
+```sh
+cd /opt/catatkeuangan && git pull && docker compose up -d --build     # sekali, supaya skripnya ada di image
+docker compose exec app node scripts/reset-transactions.js --semua                      # simulasi: semua transaksi
+docker compose exec app node scripts/reset-transactions.js --semua --commit             # hapus semuanya
+# atau hanya yang dicatat sejak tanggal tertentu (riwayat lama tetap):
+docker compose exec app node scripts/reset-transactions.js --sejak 2026-11-01 --commit
+```
+
 ## Bila ada masalah
 
 | Gejala | Periksa |
