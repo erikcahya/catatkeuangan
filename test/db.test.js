@@ -557,3 +557,52 @@ test('anggota: tambah, atur login, izin, ganti kata sandi sendiri', { skip }, as
   await pool.query(`delete from session where user_id = $1`, [nenekId]);
   await pool.query(`delete from app_user where id = $1`, [nenekId]);
 });
+
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+test('impor catatan lama: tulis, hitung, tolak ganda, batalkan tanpa menyentuh transaksi lain', { skip }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'impor-'));
+  const file = join(dir, 'lama.csv');
+  writeFileSync(file, [
+    'tanggal,kategori,keterangan,sumber,jumlah',
+    '2024-08-24,Gaji,gaji erick,kas,20000000',
+    '2024-08-26,Pemasukan Lainnya,utang octo,kas,2000000',
+    '2024-08-27,Makan dan Minum,"kantin, iin",kas,-50000',
+    '2024-08-27,Makan dan Minum,nabung bibit,kas,-100000',
+    '2024-09-25,Tagihan,bayar utang octo,kas,-1500000',
+  ].join('\n'));
+  const run = (...args) => execFileSync(process.execPath, ['scripts/import-old.js', ...args],
+    { env: { ...process.env, DATABASE_URL: url }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const count = async (sql, p = []) => (await pool.query(sql, p)).rows[0].n;
+  const before = await count('select count(*)::int n from trx');
+
+  // Simulasi tidak menulis apa pun.
+  const dry = run(file, '--batch', 'tes-impor');
+  assert.match(dry, /SIMULASI/);
+  assert.equal(await count('select count(*)::int n from trx'), before);
+
+  run(file, '--batch', 'tes-impor', '--commit');
+  assert.equal(await count(`select count(*)::int n from trx where import_batch = 'tes-impor'`), 5);
+  const kinds = (await pool.query(`select kind, count(*)::int n, sum(amount)::bigint t from trx where import_batch = 'tes-impor' group by kind order by kind`)).rows;
+  assert.deepEqual(kinds.map((k) => [k.kind, k.n, Number(k.t)]), [['expense', 2, 150000], ['income', 1, 20000000], ['transfer', 2, 3500000]]);
+  const gaji = (await pool.query(`select pc.start_date from trx t join pay_cycle pc on pc.id = t.cycle_id where t.import_batch = 'tes-impor' and t.kind = 'income'`)).rows[0];
+  assert.equal(gaji.start_date, '2024-08-25'); // gaji cair 24 Agu masuk siklus bulan gajiannya
+  const debt = (await pool.query(`select d.status, d.amount from emergency_debt d join trx w on w.id = d.withdrawal_trx_id where w.import_batch = 'tes-impor'`)).rows;
+  assert.deepEqual(debt, [{ status: 'open', amount: 500000 }]); // 2jt ditarik, 1,5jt dilunasi: sisa 500rb terbuka
+
+  // Muncul di laporan tinjauan, tidak diubah diam-diam.
+  const review = readFileSync(join(dir, 'laporan-tinjau.csv'), 'utf8');
+  assert.match(review, /nabung bibit/);
+  assert.doesNotMatch(review, /kantin/);
+
+  // Impor ganda ditolak.
+  assert.throws(() => run(file, '--batch', 'tes-impor', '--commit'), /sudah ada/);
+
+  // Rollback hanya menghapus gelombang itu.
+  run('--rollback', '--batch', 'tes-impor');
+  assert.equal(await count('select count(*)::int n from trx'), before);
+  assert.equal(await count(`select count(*)::int n from emergency_debt d join trx w on w.id = d.withdrawal_trx_id where w.import_batch = 'tes-impor'`), 0);
+});

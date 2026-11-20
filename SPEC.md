@@ -93,6 +93,15 @@ Catatan lama punya kolom: tanggal, kategori, keterangan, sumber, jumlah (bertand
 - Beberapa baris salah kategori (contoh: "nabung bibit" di Makan dan Minum). Sediakan laporan baris yang perlu ditinjau, jangan perbaiki diam-diam.
 - Pencatat transaksi lama: tetapkan ke satu pengguna tetap, karena data lama tidak mencatatnya.
 
+### Cara impor (dibuat 20 Nov 2026)
+Berkas sumber: laporan Excel "ec.financial planning_report" (25 Feb 2023 sampai 14 Jun 2025, 4.592 baris). `scripts/xlsx-to-csv.py` mengubahnya menjadi CSV dan mencocokkan jumlah per kategori dengan lembar Ringkasan; `npm run import-old` mengimpor (simulasi dulu, `--commit` untuk menulis, `--rollback` untuk membatalkan seluruh gelombang lewat kolom `trx.import_batch`).
+- Semua baris bersumber "kas": masuk ke rekening "Rek. utama". Semua transaksi lama dicatat atas nama Erik.
+- **[pasti]** Penarikan = pemasukan Pemasukan Lainnya bertuliskan "utang/pinjam octo|permata|tabungan"; pelunasan = pengeluaran Tagihan "bayar/ganti utang octo|permata|iin|tabungan". Keduanya menjadi transfer antara Rek. utama dan rekening darurat, bukan pemasukan/pengeluaran. Pengeluaran biasa yang hanya bertuliskan "utang octo" (mis. "tomoro utang octo") tetap pengeluaran.
+- **[asumsi]** Pemasangan utang FIFO: pelunasan menutup utang terlama dulu. Pelunasan yang melebihi utang terbuka menjadi kredit untuk penarikan berikutnya (di catatan lama banyak utang tidak dicatat sebagai penarikan), jadi sisa utang akhir = total penarikan - total pelunasan. Utang yang baru lunas sebagian tetap terbuka dengan jumlah sisanya. Pada tanggal yang sama penarikan diproses sebelum pelunasan.
+- Gaji masuk siklus tanggal gajian terdekat; yang lain mengikuti tanggal transaksi.
+- `is_one_off` semua `false`; pengeluaran ≥ Rp5 juta masuk laporan tinjauan sebagai kandidat untuk ditandai manual.
+- Baris yang meragukan (investasi, utang ke orang lain, nominal besar, kategori mungkin salah) diimpor apa adanya dan dicatat di `laporan-tinjau.csv` (berkas CSV dan laporan itu ada di `import/`, tidak ikut git karena pribadi).
+
 ## Belum diputuskan
 - Undangan lewat email (butuh layanan pengirim email). Untuk sekarang suami/istri menambah anggota dan mengatur email + kata sandinya di layar Anggota keluarga; `npm run set-login` tetap ada untuk akun pertama.
 - Layar pengaturan batas budget harian.

@@ -25,8 +25,20 @@ Anggota lain diberi login dengan cara yang sama (`Istri`, `Anak` adalah nama pen
 | `npm start` | Server biasa |
 | `npm run migrate` | Jalankan migrasi yang belum dijalankan |
 | `npm run set-login -- <nama> <email> <sandi>` | Atur login seorang anggota |
+| `npm run import-old -- <csv> [--commit]` | Impor catatan lama (simulasi bila tanpa `--commit`) |
 | `npm test` | Tes cepat (tanpa database) |
 | `npm run test:db` | Tes integrasi ke `TEST_DATABASE_URL` (database itu dikosongkan tiap kali jalan) |
+
+## Impor catatan lama
+
+```sh
+python -I scripts/xlsx-to-csv.py "laporan.xlsx" import/catatan-lama.csv
+npm run import-old -- import/catatan-lama.csv            # simulasi + laporan-tinjau.csv, tidak menulis apa pun
+npm run import-old -- import/catatan-lama.csv --commit   # tulis ke database
+npm run import-old -- --rollback                         # batalkan seluruh gelombang impor
+```
+
+Folder `import/` tidak ikut git. Aturannya ada di SPEC.md, bagian "Impor catatan lama".
 
 ## Struktur
 
