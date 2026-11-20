@@ -760,7 +760,9 @@ async function renderEmergency() {
     <span class="amt strong warn-amt">${rupiah(d.amount)}</span>
   </li>`;
 
-  const repayRow = (g) => `<li class="trx-item">
+  // Riwayat pelunasan: hanya yang terbaru tampil, sisanya di balik "Tampilkan lainnya".
+  const REPAY_SHOWN = 3;
+  const repayRow = (g, hidden = false) => `<li class="trx-item"${hidden ? ' data-extra-repay hidden' : ''}>
     <div class="main">
       <span class="name">Lunas ${esc(tanggal(g.repaid_date))}</span>
       <span class="tile-label">${g.debts.length} penarikan · dari ${esc(g.repaid_from)} · oleh ${esc(g.repaid_by)}</span>
@@ -783,6 +785,7 @@ async function renderEmergency() {
           <span class="tile-label">${e.open_debt > 0 ? `Kurang ${rupiah(e.open_debt)}` : 'Penuh'}</span>
         </div>
       </section>
+      ${e.open.length ? `<button type="button" class="btn-primary warn" id="repay">Catat pelunasan · ${rupiah(e.open_debt)}</button>` : ''}
       <section class="card rules">
         <span class="daily-title">Aturan</span>
         <span class="rules-text">Rekening ini berisi ${rupiah(target)} tiap siklus. Setiap penarikan dicatat sebagai utang ke rekening sendiri dan dilunasi saat gajian tanggal ${e.payday}.</span>
@@ -792,12 +795,21 @@ async function renderEmergency() {
         ? `<ul class="trx-list">${e.open.map(debtRow).join('')}</ul>`
         : '<p class="empty">Tidak ada utang. Penarikan dicatat dari layar Tambah transaksi dengan sakelar "Ambil dari rekening darurat".</p>'}
       ${e.repayments.length ? `<div class="section-head"><h2>Sudah lunas</h2></div>
-        <ul class="trx-list">${e.repayments.map(repayRow).join('')}</ul>` : ''}
+        <ul class="trx-list">${e.repayments.map((g, i) => repayRow(g, i >= REPAY_SHOWN)).join('')}</ul>
+        ${e.repayments.length > REPAY_SHOWN ? `<button type="button" class="btn-text more" id="more-repay" aria-expanded="false">
+          Tampilkan ${e.repayments.length - REPAY_SHOWN} lainnya</button>` : ''}` : ''}
     </div>
-    ${e.open.length ? '<div class="footer tight"><button type="button" class="btn-primary warn" id="repay">Catat pelunasan</button></div>' : ''}
     ${tabbar('#/darurat')}
   </div>
   <dialog id="repay-dialog" class="sheet" aria-labelledby="repay-title"></dialog>`;
+
+  document.getElementById('more-repay')?.addEventListener('click', (ev) => {
+    const btn = ev.currentTarget;
+    const show = btn.getAttribute('aria-expanded') !== 'true';
+    btn.setAttribute('aria-expanded', String(show));
+    btn.textContent = show ? 'Sembunyikan' : `Tampilkan ${e.repayments.length - REPAY_SHOWN} lainnya`;
+    app.querySelectorAll('[data-extra-repay]').forEach((li) => { li.hidden = !show; });
+  });
 
   const dlg = document.getElementById('repay-dialog');
   document.getElementById('repay')?.addEventListener('click', () => {
