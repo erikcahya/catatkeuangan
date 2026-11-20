@@ -93,11 +93,15 @@ test('berkas statis tidak bisa dibaca di luar folder public', async () => {
     const res = await app.inject({ url });
     assert.doesNotMatch(res.body, /"name": "catatkeuangan"|buildApp|DATABASE_URL|POSTGRES_PASSWORD/, url);
   }
-  // Rute API tetap dijaga walau alamatnya ditulis tidak baku.
+  // Rute API tetap dijaga walau alamatnya ditulis tidak baku. Tanpa sesi, yang boleh keluar hanya penolakan
+  // (401/403/404) atau halaman aplikasi (alamat tak dikenal dijawab index.html); tidak pernah data API.
+  // Kalau penjagaan tertembus, penangan /api/meta berjalan dan pool palsu memicu 500.
   for (const url of ['/api%2fmeta', '//api/meta', '/api/./meta', '/API/meta']) {
     const res = await app.inject({ url });
-    assert.notEqual(res.statusCode, 200, url);
-    assert.doesNotMatch(res.body, /household|payday/, url);
+    const shell = String(res.headers['content-type']).startsWith('text/html');
+    assert.ok([401, 403, 404].includes(res.statusCode) || shell, `${url} -> ${res.statusCode}`);
+    assert.notEqual(res.statusCode, 500, url);
+    assert.doesNotMatch(res.body, /payday_dom|"household_id"|can_view_reports/, url);
   }
   await app.close();
 });
