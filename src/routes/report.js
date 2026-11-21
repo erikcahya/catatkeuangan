@@ -78,7 +78,13 @@ export default async function reportRoutes(app) {
       cycle: { start, end: cycleEnd(start), label: cycleLabel(start) },
       cycles: list.sort((a, b) => (a.start < b.start ? 1 : -1)),
       totals: { income: totalIncome, expense: totalExpense, remaining: totalIncome - totalExpense },
-      extra: extra.rows[0],
+      // Nilai semua rekening aset sekarang (bukan per siklus): dari harga pasar atau nilai manual.
+      extra: { ...extra.rows[0], ...(await pool.query(
+        `select coalesce(sum(h.current_value), 0) as asset_value, count(h.current_value)::int as asset_valued
+           from account a join savings_holding h on h.account_id = a.id
+          where a.household_id = $1 and a.kind = 'asset'`,
+        [u.household_id],
+      )).rows[0] },
       expense_by_category: expense,
       income_by_category: income,
     };

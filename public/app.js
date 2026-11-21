@@ -1039,10 +1039,15 @@ async function renderSavings() {
 
   const signed = (n) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${rupiah(n)}`;
   const row = (a) => {
-    const value = a.current_value == null
-      ? '<span class="warn-text tiny">Nilai sekarang belum diisi</span>'
-      : `<span class="tile-label">Nilai sekarang ${rupiah(a.current_value)}${a.gain != null
-        ? ` · <span class="${a.gain >= 0 ? 'in' : 'danger-text'}">${signed(a.gain)}</span>` : ''}</span>`;
+    // Angka besar di kanan = nilai aset sekarang. Untung/rugi hanya bermakna bila ada setoran tercatat.
+    const big = a.current_value == null
+      ? '<span class="warn-text tiny">Nilai belum diisi</span>'
+      : `<span class="amt strong">${rupiah(a.current_value)}</span>`;
+    const note = [
+      a.current_value != null && a.gain != null && a.net_invested > 0
+        ? `<span class="${a.gain >= 0 ? 'in' : 'danger-text'}">${signed(a.gain)} dari setoran</span>` : '',
+      a.cycle_net ? `<span class="tile-label">siklus ini ${signed(a.cycle_net)}</span>` : '',
+    ].filter(Boolean).join(' · ');
     const holding = a.price_source && a.quantity != null
       ? `<span class="tile-label">${esc(holdingText(a))}${a.price_error ? ` · <span class="warn-text tiny" title="${esc(a.price_error)}">harga belum terbarui</span>` : (a.price_at ? ` · harga ${esc(jamHarga(a.price_at))}` : '')}</span>`
       : '';
@@ -1054,8 +1059,8 @@ async function renderSavings() {
         ${holding}
       </div>
       <div class="main end">
-        <span class="amt strong">${signed(a.cycle_net)}</span>
-        ${value}
+        ${big}
+        ${note ? `<span class="tile-label">${note}</span>` : ''}
       </div>
     </button></li>`;
   };
@@ -1065,8 +1070,9 @@ async function renderSavings() {
     <div class="screen-body">
       ${backHeader(`Siklus ${s.cycle.label}`, 'Tabungan dan investasi')}
       <section class="hero">
-        <span class="hero-label">Disetor siklus ini</span>
-        <span class="hero-amount">${rupiah(s.deposited_cycle)}</span>
+        ${s.assets.some((a) => a.current_value != null) ? `<span class="hero-label">Nilai aset sekarang</span>
+        <span class="hero-amount">${rupiah(s.assets.reduce((n, a) => n + (a.current_value ?? 0), 0))}</span>` : ''}
+        <span class="hero-label">Disetor siklus ini ${rupiah(s.deposited_cycle)}</span>
         <span class="hero-label">Uang yang ditabung, tidak dihitung sebagai pengeluaran${s.withdrawn_cycle
           ? ` · ditarik ${rupiah(s.withdrawn_cycle)}` : ''}</span>
       </section>
@@ -1274,6 +1280,7 @@ async function renderReport() {
           <span class="cat-right"><span class="in tiny">${rupiah(c.total)}</span>${ICON.next}</span></a></li>`).join('')}</ul>
       </section>` : ''}
       <div class="card rows facts">
+        ${r.extra.asset_valued ? `<div class="row"><span class="label">Nilai tabungan dan investasi sekarang</span><span class="value">${rupiah(r.extra.asset_value)}</span></div>` : ''}
         <div class="row"><span class="label">Ditabung</span><span class="value">${rupiah(r.extra.saved)}</span></div>
         <div class="row"><span class="label">Diambil dari rekening darurat</span><span class="value">${rupiah(r.extra.from_emergency)}</span></div>
         <div class="row"><span class="label">Pengeluaran besar</span><span class="value">${rupiah(r.extra.one_off)}</span></div>
