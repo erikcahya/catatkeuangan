@@ -469,6 +469,10 @@ test('tabungan: nilai dari jumlah unit x harga pasar, harga disimpan dan disegar
   assert.equal(k.unit_price, 1_000_000_000);
   assert.equal(k.price_source, 'crypto');
   assert.equal(k.gain, 50_000_000 - k.net_invested);
+  // Beranda menampilkan nilai aset sekarang (bukan hanya setoran siklus ini).
+  const sm = (await app.inject({ method: 'GET', url: '/api/summary', cookies: { sid } })).json();
+  assert.equal(sm.savings.value, 50_000_000);
+  assert.equal(sm.savings.valued, 1);
 
   // Harga masih segar: membuka layar lagi tidak memanggil sumber harga.
   quoteCalls.length = 0;

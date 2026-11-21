@@ -228,8 +228,8 @@ function billsAndSavings(s) {
     </a>
     <a class="tile" href="#/tabungan">
       <span class="tile-label">Tabungan dan investasi</span>
-      <span class="tile-value small">${rupiah(s.savings.deposited)}</span>
-      <span class="in tiny">Disetor siklus ini</span>
+      <span class="tile-value small">${rupiah(s.savings.valued ? s.savings.value : s.savings.deposited)}</span>
+      <span class="in tiny">${s.savings.valued ? `Nilai sekarang${s.savings.deposited ? ` · disetor ${rupiah(s.savings.deposited)}` : ''}` : 'Disetor siklus ini'}</span>
     </a>
   </div>`;
 }

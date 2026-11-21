@@ -63,7 +63,12 @@ export default async function summaryRoutes(app) {
         : ensureBillOccurrences(pool, u.household_id, start, u.payday_dom))
         .then(() => billCycleSummary(pool, u.household_id, start, status === 'current')),
       pool.query(
-        `select coalesce(sum(t.amount), 0) as deposited
+        `select coalesce(sum(t.amount), 0) as deposited,
+                -- nilai semua aset sekarang (harga pasar atau diisi manual), bukan per siklus
+                (select coalesce(sum(h.current_value), 0) from savings_holding h join account a on a.id = h.account_id
+                  where a.household_id = $1 and a.kind = 'asset') as value,
+                (select count(h.current_value)::int from savings_holding h join account a on a.id = h.account_id
+                  where a.household_id = $1 and a.kind = 'asset') as valued
            from trx t
            join pay_cycle pc on pc.id = t.cycle_id
            join account ta on ta.id = t.to_account_id
