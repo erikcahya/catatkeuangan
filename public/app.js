@@ -1096,24 +1096,28 @@ async function renderSavings() {
   app.querySelectorAll('[data-asset]').forEach((btn) => btn.addEventListener('click', () => {
     const a = s.assets.find((x) => x.account_id === btn.dataset.asset);
     const tracked = !!a.price_source;
+    // Aset yang belum pernah diisi dibuka langsung di mode otomatis; jenisnya ditebak dari nama (Emas, Kripto).
+    const guess = /emas/i.test(a.name) ? 'gold' : /kripto|crypto/i.test(a.name) ? 'crypto' : null;
+    const startMarket = tracked || (a.current_value == null && !!guess);
+    const pre = a.price_source ?? guess ?? 'crypto';
     dlg.innerHTML = `<form class="sheet-body" novalidate>
       <h2 id="value-title" class="title">Nilai ${esc(a.name)} sekarang</h2>
       <div class="error" hidden></div>
       <div class="segmented" role="group" aria-label="Cara mengisi nilai">
-        <button type="button" data-mode="manual" aria-pressed="${!tracked}">Isi manual</button>
-        <button type="button" data-mode="market" aria-pressed="${tracked}">Harga pasar</button>
+        <button type="button" data-mode="market" aria-pressed="${startMarket}">Otomatis (harga pasar)</button>
+        <button type="button" data-mode="manual" aria-pressed="${!startMarket}">Isi manual</button>
       </div>
-      <div id="mode-manual"${tracked ? ' hidden' : ''}>
+      <div id="mode-manual"${startMarket ? ' hidden' : ''}>
         <div class="card field amount">
           <label for="v-amount">Nilai sekarang (kosongkan bila tidak tahu)</label>
           <input id="v-amount" inputmode="numeric" autocomplete="off" placeholder="Rp 0"
             value="${a.current_value == null || tracked ? '' : rupiah(a.current_value)}">
         </div>
       </div>
-      <div id="mode-market"${tracked ? '' : ' hidden'}>
+      <div id="mode-market"${startMarket ? '' : ' hidden'}>
         <div class="card rows">
           <div class="row"><label for="m-source">Jenis</label>
-            <select id="m-source">${Object.entries(SOURCE_LABEL).map(([v, l]) => `<option value="${v}"${a.price_source === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+            <select id="m-source">${Object.entries(SOURCE_LABEL).map(([v, l]) => `<option value="${v}"${pre === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
           <div class="row" id="m-symbol-row"><label for="m-symbol" id="m-symbol-label">Kode</label>
             <input id="m-symbol" type="text" autocomplete="off" autocapitalize="characters" maxlength="40" value="${esc(a.price_source === 'gold' ? '' : (a.symbol ?? ''))}"></div>
         </div>
@@ -1121,6 +1125,7 @@ async function renderSavings() {
           <label for="m-qty" id="m-qty-label">Jumlah</label>
           <input id="m-qty" inputmode="decimal" autocomplete="off" placeholder="0,05" value="${a.quantity == null ? '' : esc(jumlahUnit(a.quantity))}">
         </div>
+        <p class="tile-label">Anda hanya mengisi <b>jumlah unit</b> yang dimiliki. Harga dan nilainya diambil otomatis dari pasar, tanpa mengetik nilai Rupiah.</p>
         <p class="tile-label" id="m-hint"></p>
       </div>
       <p class="tile-label">Total setoran ${rupiah(a.net_invested)}${a.as_of_date ? ` · nilai per ${esc(tanggal(a.as_of_date))}` : ''}</p>
@@ -1129,7 +1134,7 @@ async function renderSavings() {
     </form>`;
     const f = dlg.querySelector('form');
     const amt = f.querySelector('#v-amount');
-    let mode = tracked ? 'market' : 'manual';
+    let mode = startMarket ? 'market' : 'manual';
     const source = f.querySelector('#m-source');
     const HINTS = {
       crypto: ['Kode koin', 'Jumlah koin', 'Contoh kode: BTC, ETH, SOL. Harga dari CoinGecko dalam Rupiah. Untuk koin lain, isi id CoinGecko-nya (mis. chainlink).'],
@@ -1185,7 +1190,7 @@ async function renderSavings() {
       }
     });
     dlg.showModal();
-    (tracked ? f.querySelector('#m-qty') : amt).focus();
+    (startMarket ? f.querySelector('#m-qty') : amt).focus();
   }));
 }
 
