@@ -93,6 +93,8 @@ a { color: var(--primary); text-decoration: none; }
 }
 .row > label, .row > .label { color: var(--muted); flex: none; }
 .row input[type="text"] { cursor: text; }
+.adj { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.adj .row { padding: 0; }
 .row select, .row input[type="date"], .row input[type="text"], .row .value {
   border: none; background: transparent; font-weight: 500; font-size: 14px;
   text-align: right; text-align-last: right; min-width: 0; max-width: 62%;

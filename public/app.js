@@ -1032,6 +1032,7 @@ async function renderEmergency() {
 // ---------- Layar 5: tabungan dan investasi ----------
 
 const SOURCE_LABEL = { crypto: 'Kripto', gold: 'Emas', fx: 'Valas' };
+const unitName = (a) => (a.price_source === 'gold' ? 'gram emas' : String(a.symbol ?? '').toUpperCase());
 const jumlahUnit = (n) => Number(n).toLocaleString('id-ID', { maximumFractionDigits: 10 });
 function holdingText(a) {
   const unit = a.price_source === 'gold' ? 'gram emas' : String(a.symbol ?? '').toUpperCase();
@@ -1121,6 +1122,20 @@ async function renderSavings() {
     dlg.innerHTML = `<form class="sheet-body" novalidate>
       <h2 id="value-title" class="title">Nilai ${esc(a.name)} sekarang</h2>
       <div class="error" hidden></div>
+      ${tracked ? `<section class="card adj" aria-label="Tambah atau kurangi unit">
+        <span class="daily-title">Punya ${esc(jumlahUnit(a.quantity))} ${esc(unitName(a))} sekarang</span>
+        <div class="segmented two" role="group" aria-label="Beli atau jual">
+          <button type="button" data-adj="buy" aria-pressed="true">Tambah (beli)</button>
+          <button type="button" data-adj="sell" aria-pressed="false">Kurangi (jual)</button>
+        </div>
+        <div class="row"><label for="a-qty">Jumlah unit</label>
+          <input id="a-qty" type="text" inputmode="decimal" autocomplete="off" placeholder="contoh: 0,3"></div>
+        <div class="row"><label for="a-amt">Rupiah</label>
+          <input id="a-amt" type="text" inputmode="numeric" autocomplete="off" placeholder="otomatis dari harga pasar"></div>
+        <p class="tile-label" id="a-note"></p>
+        <button type="button" class="btn-primary" id="a-go">Catat Tabung</button>
+      </section>
+      <p class="tile-label">Atau ubah total langsung (koreksi, tanpa mencatat transaksi):</p>` : ''}
       <div class="segmented" role="group" aria-label="Cara mengisi nilai">
         <button type="button" data-mode="market" aria-pressed="${startMarket}">Otomatis (harga pasar)</button>
         <button type="button" data-mode="manual" aria-pressed="${!startMarket}">Isi manual</button>
@@ -1180,6 +1195,54 @@ async function renderSavings() {
     }));
     amt.addEventListener('input', () => { const n = parseRupiah(amt.value); amt.value = amt.value.trim() ? rupiah(n) : ''; });
     f.querySelector('#v-cancel').addEventListener('click', () => dlg.close());
+    if (tracked) {
+      let adj = 'buy';
+      const qEl = f.querySelector('#a-qty');
+      const aEl = f.querySelector('#a-amt');
+      const note = f.querySelector('#a-note');
+      const parseQ = () => Number(qEl.value.trim().replace(/\s/g, '').replace(',', '.'));
+      const bank = m.accounts.find((x) => x.name === 'Rek. utama') ?? m.accounts.find((x) => x.kind !== 'asset' && !x.is_emergency);
+      const refreshNote = () => {
+        const q = parseQ();
+        const est = a.unit_price && q > 0 ? Math.round(q * a.unit_price) : 0;
+        const after = a.quantity + (adj === 'buy' ? q : -q);
+        note.textContent = q > 0
+          ? `Total jadi ${jumlahUnit(Number(Math.max(after, 0).toFixed(10)))} ${unitName(a)}${!aEl.value.trim() && est ? ` · Rupiah ≈ ${rupiah(est)}` : ''} · ${adj === 'buy' ? 'dari' : 'ke'} ${bank?.name ?? 'rekening'}`
+          : 'Isi jumlah unit yang ditambah atau dikurangi. Rupiah boleh dikosongkan.';
+      };
+      f.querySelectorAll('[data-adj]').forEach((b) => b.addEventListener('click', () => {
+        adj = b.dataset.adj;
+        f.querySelectorAll('[data-adj]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+        f.querySelector('#a-go').textContent = adj === 'buy' ? 'Catat Tabung' : 'Catat Tarik';
+        refreshNote();
+      }));
+      qEl.addEventListener('input', refreshNote);
+      aEl.addEventListener('input', () => { const n = parseRupiah(aEl.value); aEl.value = aEl.value.trim() ? rupiah(n) : ''; refreshNote(); });
+      refreshNote();
+      f.querySelector('#a-go').addEventListener('click', async () => {
+        const err = f.querySelector('.error');
+        err.hidden = true;
+        const q = parseQ();
+        const amount = aEl.value.trim() ? parseRupiah(aEl.value) : Math.round(q * (a.unit_price ?? 0));
+        try {
+          if (!(q > 0)) throw new Error('Isi jumlah unit yang lebih dari 0 (desimal pakai koma).');
+          if (!(amount >= 1)) throw new Error('Rupiah tidak bisa dihitung: isi sendiri jumlah Rupiahnya.');
+          if (!bank) throw new Error('Rekening utama tidak ditemukan.');
+          const buy = adj === 'buy';
+          await api('/api/trx', { method: 'POST', body: {
+            kind: 'transfer', amount, trx_date: m.today, asset_quantity: q, note: null,
+            account_id: buy ? bank.id : a.account_id, to_account_id: buy ? a.account_id : bank.id,
+          } });
+          dlg.close();
+          meta = null;
+          toast(`${buy ? 'Tabung' : 'Tarik'} ${jumlahUnit(q)} ${unitName(a)} (${rupiah(amount)}) tercatat.`);
+          renderSavings();
+        } catch (ex) {
+          err.textContent = ex.message;
+          err.hidden = false;
+        }
+      });
+    }
     f.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const err = f.querySelector('.error');
