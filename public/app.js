@@ -380,7 +380,11 @@ async function renderAdd(preset = {}) {
       </div>`}
       ${lockNote ? `<div class="note-box">${esc(lockNote)}</div>` : ''}
       <div id="add-err" class="error" hidden></div>
-      <div class="card field amount">
+      <div class="segmented two" id="entry-mode" role="group" aria-label="Cara memasukkan jumlah" hidden>
+        <button type="button" data-entry="unit" aria-pressed="true">Jumlah aset</button>
+        <button type="button" data-entry="rp" aria-pressed="false">Nominal (Rp)</button>
+      </div>
+      <div class="card field amount" id="amount-card">
         <label for="amount">Jumlah</label>
         <input id="amount" name="amount" inputmode="numeric" autocomplete="off" placeholder="Rp 0" required>
       </div>
@@ -485,6 +489,7 @@ async function renderAdd(preset = {}) {
 
   // Jumlah unit (gram, koin) hanya untuk Tabung/Tarik pada aset yang nilainya mengikuti harga pasar.
   const unitsEl = document.getElementById('units');
+  state.entry = 'unit';
   let amountTyped = false;
   const trackedAsset = () => {
     const id = state.kind === 'saving' ? form.to_account.value : state.kind === 'withdraw' ? form.account.value : null;
@@ -493,12 +498,25 @@ async function renderAdd(preset = {}) {
   };
   const unitText = (a) => (a.price_source === 'gold' ? 'gram emas' : String(a.symbol ?? '').toUpperCase());
   const parseUnits = () => Number(unitsEl.value.trim().replace(/\s/g, '').replace(',', '.'));
+  // Aset yang dilacak: bisa memasukkan jumlah aset (gram, koin) tanpa nominal; Rupiah dihitung dari harga pasar.
+  const unitMode = () => { const a = trackedAsset(); return !!a?.unit_price && !edit && state.entry === 'unit'; };
   function syncUnits() {
     const a = trackedAsset();
+    const canUnit = !!a?.unit_price && !edit;
+    const byUnit = unitMode();
+    show('entry-mode', canUnit);
+    show('amount-card', !byUnit);
     show('row-units', !!a);
+    document.getElementById('row-units').classList.toggle('amount', byUnit);
     const moving = state.kind === 'saving' || state.kind === 'withdraw';
     show('units-hint', moving && !a);
-    if (a) document.getElementById('units-label').textContent = `${state.kind === 'saving' ? 'Jumlah dibeli' : 'Jumlah dijual'} (${unitText(a)})`;
+    if (a) {
+      const ent = form.querySelectorAll('[data-entry]');
+      ent[0].textContent = `Jumlah ${unitText(a)}`;
+      ent.forEach((b) => b.setAttribute('aria-pressed', String((b.dataset.entry === 'unit') === byUnit)));
+      document.getElementById('units-label').textContent = `${state.kind === 'saving' ? 'Jumlah dibeli' : 'Jumlah dijual'} (${unitText(a)})`;
+      unitsEl.placeholder = byUnit ? '0,3' : 'Kosongkan = dihitung otomatis';
+    }
     estimateUnits();
   }
   // Bila dikosongkan, server menghitung jumlah unit dari Rupiah / harga pasar terakhir.
@@ -506,10 +524,16 @@ async function renderAdd(preset = {}) {
     const a = trackedAsset();
     const est = document.getElementById('units-est');
     const n = parseRupiah(form.amount.value);
+    if (unitMode()) {
+      const q = parseUnits();
+      est.textContent = q > 0 ? `≈ ${rupiah(Math.round(q * a.unit_price))} pada harga pasar terakhir. Rupiah dicatat otomatis.` : 'Isi jumlah asetnya saja, tanpa nominal Rupiah.';
+      return;
+    }
     est.textContent = a?.unit_price && n && !unitsEl.value.trim()
       ? `Dikosongkan: otomatis ≈ ${jumlahUnit(Number((n / a.unit_price).toFixed(8)))} ${unitText(a)} (harga pasar terakhir)`
       : (a ? 'Isi sendiri bila jumlahnya dari struk berbeda dengan harga pasar.' : '');
   }
+  form.querySelectorAll('[data-entry]').forEach((b) => b.addEventListener('click', () => { state.entry = b.dataset.entry; syncUnits(); }));
   form.account.addEventListener('change', syncUnits);
   form.to_account.addEventListener('change', syncUnits);
   form.amount.addEventListener('input', () => { amountTyped = true; estimateUnits(); });
@@ -563,9 +587,11 @@ async function renderAdd(preset = {}) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     err.hidden = true;
-    const amount = parseRupiah(form.amount.value);
     const fail = (msg, el) => { err.textContent = msg; err.hidden = false; el?.focus(); };
-    if (!amount) return fail('Isi jumlahnya dulu.', form.amount);
+    const byUnit = unitMode();
+    const amount = byUnit ? Math.round(parseUnits() * trackedAsset().unit_price) : parseRupiah(form.amount.value);
+    if (byUnit && !(parseUnits() > 0)) return fail('Isi jumlah asetnya (desimal pakai koma).', unitsEl);
+    if (!amount) return fail(byUnit ? 'Jumlahnya terlalu kecil untuk harga saat ini.' : 'Isi jumlahnya dulu.', byUnit ? unitsEl : form.amount);
     if (!form.trx_date.value) return fail('Isi tanggalnya.', form.trx_date);
     const moving = isMoving(state.kind);
     if (moving && form.account.value === form.to_account.value) {
