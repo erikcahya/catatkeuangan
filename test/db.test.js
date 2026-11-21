@@ -26,7 +26,7 @@ before(async () => {
   await pool.query(`insert into session (token_hash, user_id, expires_at) values ($1, $2, now() + interval '1 day')`,
     [hashToken(sid), erik.id]);
   // Harga pasar palsu: tes tidak boleh memanggil internet. Mengisi `calls` untuk memeriksa jumlah panggilan.
-  const prices = { 'crypto:BTC': 1_000_000_000, 'gold:XAU': 2_000_000, 'fx:CHF': 20_000 };
+  const prices = { 'crypto:BTC': 1_000_000_000, 'gold:XAU': 2_000_000, 'fx:CHF': 20_000, 'stock:BBCA': 5_550 };
   app = buildApp({ pool, logger: false, quote: async (source, symbol) => {
     quoteCalls.push(`${source}:${symbol}`);
     if (!(`${source}:${symbol}` in prices)) throw new Error(`Kode "${symbol}" tidak ditemukan.`);
@@ -486,6 +486,12 @@ test('tabungan: nilai dari jumlah unit x harga pasar, harga disimpan dan disegar
   assert.equal((await asset('Emas')).current_value, 20_000_000);
   assert.equal((await put('Saham', { price_source: 'fx', symbol: 'chf', quantity: 1000 })).statusCode, 200);
   assert.equal((await asset('Saham')).current_value, 20_000_000);
+  // Saham: 100 lembar x Rp5.550; kode huruf kecil disimpan kapital.
+  assert.equal((await put('Saham', { price_source: 'stock', symbol: 'bbca', quantity: 100 })).statusCode, 200);
+  assert.equal((await asset('Saham')).current_value, 555_000);
+  assert.equal((await asset('Saham')).symbol, 'BBCA');
+  assert.equal((await put('Saham', { price_source: 'stock', symbol: 'BB CA', quantity: 1 })).statusCode, 400);
+  assert.equal((await put('Saham', { price_source: 'fx', symbol: 'chf', quantity: 1000 })).statusCode, 200);
 
   // Kode tidak dikenal: tersimpan tapi nilai tidak berubah dan pesan galat ikut dikembalikan.
   r = await put('Kripto', { price_source: 'crypto', symbol: 'NOPE', quantity: 1 });

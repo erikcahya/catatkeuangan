@@ -183,9 +183,10 @@ export default async function savingsRoutes(app) {
     if (!acc) throw new HttpError(404, 'Rekening aset tidak ditemukan.');
     const { price_source: source, quantity } = req.body;
     const typed = (req.body.symbol ?? '').trim();
-    const symbol = source === 'gold' ? 'XAU' : source === 'fx' ? typed.toUpperCase() : typed;
+    const symbol = source === 'gold' ? 'XAU' : source === 'fx' || source === 'stock' ? typed.toUpperCase() : typed;
     if (source === 'crypto' && !/^[A-Za-z0-9._-]{1,40}$/.test(symbol)) throw new HttpError(400, 'Isi kode koin, mis. BTC atau ETH.');
     if (source === 'fx' && !/^[A-Za-z]{3}$/.test(symbol)) throw new HttpError(400, 'Isi kode mata uang 3 huruf, mis. CHF atau USD.');
+    if (source === 'stock' && !/^[A-Za-z0-9-]{1,12}(\.[A-Za-z]{1,3})?$/.test(symbol)) throw new HttpError(400, 'Isi kode saham, mis. BBCA atau TLKM.');
     const wasTracked = (await pool.query('select price_source from savings_holding where account_id = $1', [acc.id])).rows[0]?.price_source != null;
     await pool.query(
       `insert into savings_holding (account_id, asset_type, name, price_source, symbol, quantity, unit_price, price_at)

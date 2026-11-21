@@ -4,9 +4,11 @@
 //   gold:   emas dunia (token PAX Gold, 1 token = 1 troy ounce) dibagi 31,1035 = harga per gram.
 //           Ini harga pasar internasional, bukan harga jual-beli Antam/Pegadaian (biasanya lebih tinggi).
 //   fx:     kurs mata uang ke Rupiah dari open.er-api.com (diperbarui sekali sehari).
+//   stock:  saham BEI (kode seperti BBCA) dari Yahoo Finance, harga per lembar. Sumber tidak resmi: bisa tertunda
+//           atau berubah tanpa pemberitahuan; bila gagal, harga terakhir dipakai.
 
 export const GRAMS_PER_OUNCE = 31.1034768;
-export const SOURCES = ['crypto', 'gold', 'fx'];
+export const SOURCES = ['crypto', 'gold', 'fx', 'stock'];
 const TIMEOUT_MS = 6000;
 
 const COINS = {
@@ -57,6 +59,16 @@ export async function quote(source, symbol, fetchImpl = fetch) {
     const price = data?.result === 'success' ? data.rates?.IDR : undefined;
     if (!(price > 0)) throw new Error(`Kurs ${code} ke Rupiah tidak ditemukan.`);
     return price;
+  }
+  if (source === 'stock') {
+    const code = String(symbol).trim().toUpperCase();
+    if (!/^[A-Z0-9-]{1,12}(\.[A-Z]{1,3})?$/.test(code)) throw new Error('Kode saham tidak valid, mis. BBCA atau TLKM.');
+    const ticker = code.includes('.') ? code : `${code}.JK`;
+    const data = await getJson(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=1d&interval=1d`, fetchImpl);
+    const meta = data?.chart?.result?.[0]?.meta;
+    if (!(meta?.regularMarketPrice > 0)) throw new Error(`Saham "${code}" tidak ditemukan.`);
+    if (meta.currency && meta.currency !== 'IDR') throw new Error(`Saham "${code}" tidak berharga Rupiah.`);
+    return meta.regularMarketPrice;
   }
   throw new Error('Jenis sumber harga tidak dikenal.');
 }

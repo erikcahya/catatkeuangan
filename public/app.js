@@ -474,7 +474,7 @@ async function renderAdd(preset = {}) {
     if (moving) {
       const toList = k === 'saving' ? assets : k === 'withdraw' ? regular.filter((a) => a.kind !== 'asset') : m.accounts;
       const prevTo = form.to_account.value;
-      const fallback = k === 'saving' ? (preset.toAccountId ?? assets[0]?.id)
+      const fallback = k === 'saving' ? (preset.toAccountId ?? assets.find((x) => x.price_source)?.id ?? assets[0]?.id)
         : k === 'withdraw' ? toList[0]?.id : (emergency?.id ?? m.accounts[1]?.id);
       form.to_account.innerHTML = options(toList, toList.some((a) => a.id === prevTo) ? prevTo : fallback);
     }
@@ -496,7 +496,7 @@ async function renderAdd(preset = {}) {
     const a = id && m.accounts.find((x) => x.id === id);
     return a?.price_source ? a : null;
   };
-  const unitText = (a) => (a.price_source === 'gold' ? 'gram emas' : String(a.symbol ?? '').toUpperCase());
+  const unitText = (a) => unitName(a);
   const parseUnits = () => Number(unitsEl.value.trim().replace(/\s/g, '').replace(',', '.'));
   // Aset yang dilacak: bisa memasukkan jumlah aset (gram, koin) tanpa nominal; Rupiah dihitung dari harga pasar.
   const unitMode = () => { const a = trackedAsset(); return !!a?.unit_price && !edit && state.entry === 'unit'; };
@@ -1057,11 +1057,11 @@ async function renderEmergency() {
 
 // ---------- Layar 5: tabungan dan investasi ----------
 
-const SOURCE_LABEL = { crypto: 'Kripto', gold: 'Emas', fx: 'Valas' };
-const unitName = (a) => (a.price_source === 'gold' ? 'gram emas' : String(a.symbol ?? '').toUpperCase());
+const SOURCE_LABEL = { crypto: 'Kripto', gold: 'Emas', fx: 'Valas', stock: 'Saham (BEI)' };
+const unitName = (a) => (a.price_source === 'gold' ? 'gram emas' : a.price_source === 'stock' ? `lembar ${String(a.symbol ?? '').toUpperCase()}` : String(a.symbol ?? '').toUpperCase());
 const jumlahUnit = (n) => Number(n).toLocaleString('id-ID', { maximumFractionDigits: 10 });
 function holdingText(a) {
-  const unit = a.price_source === 'gold' ? 'gram emas' : String(a.symbol ?? '').toUpperCase();
+  const unit = unitName(a);
   return `${jumlahUnit(a.quantity)} ${unit}${a.unit_price ? ` × ${rupiah(Math.round(a.unit_price))}` : ''}`;
 }
 function jamHarga(iso) {
@@ -1142,7 +1142,7 @@ async function renderSavings() {
     const a = s.assets.find((x) => x.account_id === btn.dataset.asset);
     const tracked = !!a.price_source;
     // Aset yang belum pernah diisi dibuka langsung di mode otomatis; jenisnya ditebak dari nama (Emas, Kripto).
-    const guess = /emas/i.test(a.name) ? 'gold' : /kripto|crypto/i.test(a.name) ? 'crypto' : null;
+    const guess = /emas/i.test(a.name) ? 'gold' : /kripto|crypto/i.test(a.name) ? 'crypto' : /saham/i.test(a.name) ? 'stock' : null;
     const startMarket = tracked || (a.current_value == null && !!guess);
     const pre = a.price_source ?? guess ?? 'crypto';
     dlg.innerHTML = `<form class="sheet-body" novalidate>
@@ -1203,6 +1203,7 @@ async function renderSavings() {
       crypto: ['Kode koin', 'Jumlah koin', 'Contoh kode: BTC, ETH, SOL. Harga dari CoinGecko dalam Rupiah. Untuk koin lain, isi id CoinGecko-nya (mis. chainlink).'],
       gold: ['', 'Jumlah (gram)', 'Harga emas dunia per gram dalam Rupiah (bukan harga jual-beli Antam atau Pegadaian, biasanya sedikit lebih tinggi).'],
       fx: ['Kode mata uang', 'Jumlah', 'Contoh kode: CHF, USD, EUR, SGD. Kurs ke Rupiah diperbarui sekali sehari.'],
+      stock: ['Kode saham', 'Jumlah (lembar)', 'Contoh kode: BBCA, TLKM, GOTO. Jumlahnya dalam lembar (1 lot = 100 lembar). Harga dari Yahoo Finance (sumber tidak resmi, bisa tertunda); bila gagal, harga terakhir dipakai.'],
     };
     const syncSource = () => {
       const [symLabel, qtyLabel, hint] = HINTS[source.value];

@@ -41,3 +41,13 @@ test('quote: jaringan putus, HTTP gagal, dan jenis tak dikenal semuanya jadi gal
   await assert.rejects(quote('crypto', 'BTC', json({}, false, 429)), /kode 429/);
   await assert.rejects(quote('saham', 'BBCA', json({})), /tidak dikenal/);
 });
+
+test('quote stock: harga per lembar dari Yahoo, kode BEI diberi akhiran .JK', async () => {
+  urls.length = 0;
+  const body = { chart: { result: [{ meta: { currency: 'IDR', regularMarketPrice: 5550 } }] } };
+  assert.equal(await quote('stock', 'bbca', spy(body)), 5550);
+  assert.match(urls[0], /chart\/BBCA\.JK\?/);
+  await assert.rejects(quote('stock', 'BB CA', json({})), /tidak valid/);
+  await assert.rejects(quote('stock', 'ZZZZ', json({ chart: { result: null } })), /tidak ditemukan/);
+  await assert.rejects(quote('stock', 'AAPL.US', json({ chart: { result: [{ meta: { currency: 'USD', regularMarketPrice: 10 } }] } })), /tidak berharga Rupiah/);
+});
