@@ -525,6 +525,48 @@ test('tabungan: nilai dari jumlah unit x harga pasar, harga disimpan dan disegar
   await get();
   assert.ok(!quoteCalls.includes('crypto:BTC'));
 
+  // Tabung/Tarik dengan jumlah unit: menambah/mengurangi jumlah yang dilacak, dan ubah/hapus membatalkannya.
+  const today = (await app.inject({ method: 'GET', url: '/api/meta', cookies: { sid } })).json().today;
+  const trx = (method, url, payload) => app.inject({ method, url, cookies: { sid }, payload });
+  const move = (from, to, amount, asset_quantity) => trx('POST', '/api/trx', { kind: 'transfer', amount, trx_date: today,
+    account_id: acc[from], to_account_id: acc[to], asset_quantity });
+  const qty = async (name) => (await asset(name)).quantity;
+  assert.equal(await qty('Emas'), 10);
+
+  const buy = await move('Rek. utama', 'Emas', 4_100_000, 2);
+  assert.equal(buy.statusCode, 201);
+  assert.equal(buy.json().item.asset_quantity, 2);
+  assert.equal(await qty('Emas'), 12);
+  assert.equal((await asset('Emas')).current_value, 24_000_000);
+
+  assert.equal((await move('Emas', 'Rek. utama', 9_900_000, 5)).statusCode, 201);
+  assert.equal(await qty('Emas'), 7);
+
+  const tooMuch = await move('Emas', 'Rek. utama', 1, 100);
+  assert.equal(tooMuch.statusCode, 409);
+  assert.equal(await qty('Emas'), 7, 'penolakan tidak mengubah jumlah');
+
+  // Jumlah unit tanpa rekening aset, atau pada aset yang tidak dilacak, ditolak.
+  assert.equal((await move('Rek. utama', 'Rekening darurat', 1000, 1)).statusCode, 400);
+  assert.equal((await move('Rek. utama', 'Kripto', 1000, 1)).statusCode, 400);
+  assert.equal((await post({ kind: 'expense', amount: 1000, trx_date: today, account_id: acc['Rek. utama'],
+    category_id: cat['Makan dan Minum'], asset_quantity: 1 })).statusCode, 400);
+
+  // Ubah: jumlah unit diganti (2 -> 3 gram) = tambah 1; hapus = kembali.
+  const id = buy.json().item.id;
+  const edit = await trx('PUT', `/api/trx/${id}`, { kind: 'transfer', amount: 6_200_000, trx_date: today,
+    account_id: acc['Rek. utama'], to_account_id: acc['Emas'], asset_quantity: 3 });
+  assert.equal(edit.statusCode, 200);
+  assert.equal(await qty('Emas'), 8);
+  assert.equal((await trx('DELETE', `/api/trx/${id}`)).statusCode, 200);
+  assert.equal(await qty('Emas'), 5);
+
+  // Setelah pelacakan dimatikan, menghapus transaksi bersejarah tetap bisa.
+  const buy2 = await move('Rek. utama', 'Emas', 2_000_000, 1);
+  assert.equal(await qty('Emas'), 6);
+  await app.inject({ method: 'PUT', url: `/api/savings/${acc['Emas']}/value`, cookies: { sid }, payload: { current_value: 1 } });
+  assert.equal((await trx('DELETE', `/api/trx/${buy2.json().item.id}`)).statusCode, 200);
+
   await pool.query('delete from savings_holding');
 });
 

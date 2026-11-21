@@ -8,8 +8,10 @@ export default async function metaRoutes(app) {
     const u = req.user;
     const [accounts, categories] = await Promise.all([
       pool.query(
-        `select id, name, kind, is_emergency from account
-          where household_id = $1 order by is_emergency, kind, name`,
+        // price_source/symbol/unit_price: aset yang nilainya mengikuti harga pasar (form Tabung/Tarik menawarkan jumlah unit).
+        `select a.id, a.name, a.kind, a.is_emergency, h.price_source, h.symbol, h.unit_price
+           from account a left join savings_holding h on h.account_id = a.id
+          where a.household_id = $1 order by a.is_emergency, a.kind, a.name`,
         [u.household_id],
       ),
       pool.query(

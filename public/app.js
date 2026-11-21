@@ -384,6 +384,10 @@ async function renderAdd(preset = {}) {
         <label for="amount">Jumlah</label>
         <input id="amount" name="amount" inputmode="numeric" autocomplete="off" placeholder="Rp 0" required>
       </div>
+      <div class="card field" id="row-units" hidden>
+        <label for="units" id="units-label">Jumlah unit</label>
+        <input id="units" name="units" inputmode="decimal" autocomplete="off" placeholder="0,5">
+      </div>
       <div class="card rows">
         <div class="row" id="row-category">
           <label for="category">Kategori</label>
@@ -477,9 +481,35 @@ async function renderAdd(preset = {}) {
     form.account.innerHTML = options(accList, accList.some((a) => a.id === prevAcc) ? prevAcc : accList[0]?.id);
   }
 
+  // Jumlah unit (gram, koin) hanya untuk Tabung/Tarik pada aset yang nilainya mengikuti harga pasar.
+  const unitsEl = document.getElementById('units');
+  let amountTyped = false;
+  const trackedAsset = () => {
+    const id = state.kind === 'saving' ? form.to_account.value : state.kind === 'withdraw' ? form.account.value : null;
+    const a = id && m.accounts.find((x) => x.id === id);
+    return a?.price_source ? a : null;
+  };
+  const unitText = (a) => (a.price_source === 'gold' ? 'gram emas' : String(a.symbol ?? '').toUpperCase());
+  const parseUnits = () => Number(unitsEl.value.trim().replace(/\s/g, '').replace(',', '.'));
+  function syncUnits() {
+    const a = trackedAsset();
+    show('row-units', !!a);
+    if (a) document.getElementById('units-label').textContent = `${state.kind === 'saving' ? 'Jumlah dibeli' : 'Jumlah dijual'} (${unitText(a)}), boleh dikosongkan`;
+  }
+  form.account.addEventListener('change', syncUnits);
+  form.to_account.addEventListener('change', syncUnits);
+  form.amount.addEventListener('input', () => { amountTyped = true; });
+  unitsEl.addEventListener('input', () => {
+    // Perkiraan Rupiah dari harga pasar bila jumlahnya belum diisi sendiri.
+    const a = trackedAsset();
+    const q = parseUnits();
+    if (!edit && a?.unit_price && q > 0 && !amountTyped) form.amount.value = rupiah(Math.round(q * a.unit_price));
+  });
+
   form.querySelectorAll('[data-kind]').forEach((b) => b.addEventListener('click', () => {
     state.kind = b.dataset.kind;
     sync();
+    syncUnits();
   }));
   form.from_emergency?.addEventListener('change', sync);
   form.amount.addEventListener('input', () => {
@@ -487,18 +517,21 @@ async function renderAdd(preset = {}) {
     form.amount.value = n ? rupiah(n) : '';
   });
   sync();
+  syncUnits();
   if (edit) {
     // Isi form dengan transaksi yang diubah, lalu sinkronkan lagi agar pilihan tidak tertimpa.
     form.amount.value = rupiah(edit.amount);
     form.trx_date.value = edit.trx_date;
     form.note.value = edit.note ?? '';
     form.is_one_off.checked = !!edit.is_one_off;
+    if (edit.asset_quantity != null) unitsEl.value = jumlahUnit(edit.asset_quantity);
     if (edit.category_id && form.category.querySelector(`option[value="${edit.category_id}"]`)) form.category.value = edit.category_id;
     if (form.account.querySelector(`option[value="${edit.account_id}"]`)) form.account.value = edit.account_id;
     if (edit.to_account_id && form.to_account.querySelector(`option[value="${edit.to_account_id}"]`)) form.to_account.value = edit.to_account_id;
     if (lockAccounts && state.kind === 'transfer') { form.account.disabled = true; form.to_account.disabled = true; }
     if (edit.is_emergency_withdrawal && edit.debt_status === 'paid') form.amount.readOnly = true;
     sync();
+    syncUnits();
   }
   document.getElementById('del-trx')?.addEventListener('click', async () => {
     if (!confirm('Hapus transaksi ini?')) return;
@@ -525,6 +558,9 @@ async function renderAdd(preset = {}) {
     }
 
     const isExpense = state.kind === 'expense';
+    const unitsOn = !!trackedAsset();
+    const units = unitsOn && unitsEl.value.trim() ? parseUnits() : null;
+    if (unitsOn && unitsEl.value.trim() && !(units > 0)) return fail('Jumlah unit harus lebih dari 0 (desimal pakai koma).', unitsEl);
     const body = {
       kind: moving ? 'transfer' : state.kind,
       amount,
@@ -535,6 +571,7 @@ async function renderAdd(preset = {}) {
       note: form.note.value.trim() || null,
       is_one_off: isExpense && form.is_one_off.checked,
       from_emergency: isExpense && !!form.from_emergency?.checked,
+      asset_quantity: units,
     };
     if (edit) delete body.from_emergency; // penarikan darurat tidak bisa diubah-ubah lewat ubah
     const btn = form.querySelector('[type="submit"]');
@@ -1126,6 +1163,7 @@ async function renderSavings() {
             body: { price_source: source.value, symbol: source.value === 'gold' ? null : f.querySelector('#m-symbol').value, quantity: qty },
           });
           dlg.close();
+          meta = null;
           toast(r.price_error ? `Tersimpan, tapi harga belum didapat: ${r.price_error}` : `${a.name} dihitung dari harga pasar.`, { warn: !!r.price_error });
         } else {
           const raw = amt.value.trim();
@@ -1134,6 +1172,7 @@ async function renderSavings() {
             body: { current_value: raw ? parseRupiah(raw) : null },
           });
           dlg.close();
+          meta = null;
           toast(raw ? `Nilai ${a.name} disimpan.` : `Nilai ${a.name} dikosongkan.`);
         }
         renderSavings();

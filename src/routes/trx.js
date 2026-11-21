@@ -11,7 +11,7 @@ const uuid = { type: 'string', format: 'uuid' };
 const nullableUuid = { type: ['string', 'null'], format: 'uuid' };
 
 export const LIST_SQL = `
-  select t.id, t.kind, t.amount, t.trx_date, t.note, t.is_one_off, t.created_at, t.updated_at,
+  select t.id, t.kind, t.amount, t.asset_quantity, t.trx_date, t.note, t.is_one_off, t.created_at, t.updated_at,
          t.account_id, t.to_account_id, t.category_id,
          a.name  as account_name,
          a.kind  as account_kind,
@@ -42,6 +42,8 @@ const trxBody = {
   category_id: nullableUuid,
   note: { type: ['string', 'null'], maxLength: 300 },
   is_one_off: { type: 'boolean', default: false },
+  // Jumlah unit aset (gram, koin) yang ikut ditabung/ditarik; hanya untuk rekening aset yang mengikuti harga pasar.
+  asset_quantity: { type: ['number', 'null'], exclusiveMinimum: 0, maximum: 1e12 },
 };
 
 /**
@@ -67,6 +69,40 @@ async function resolveTarget(c, u, b, { forcedAccountId = null, forcedToAccountI
   if (!cat) throw new HttpError(400, 'Pilih kategori.');
   if (cat.kind !== b.kind) throw new HttpError(400, 'Kategori tidak cocok dengan jenis transaksi.');
   return { accountId, toAccountId: null, categoryId: cat.id, category: cat };
+}
+
+/**
+ * Rekening aset yang jumlah unitnya berubah oleh sebuah transfer: Tabung (ke aset) menambah, Tarik (dari aset) mengurangi.
+ * Mengembalikan null bila tidak ada jumlah unit atau bukan transfer dari/ke rekening aset.
+ */
+async function assetEffect(c, accountId, toAccountId, qty) {
+  if (qty == null || !toAccountId) return null;
+  const { rows } = await c.query('select id, kind from account where id = any($1::uuid[])', [[accountId, toAccountId]]);
+  const kind = Object.fromEntries(rows.map((r) => [r.id, r.kind]));
+  const fromAsset = kind[accountId] === 'asset';
+  const toAsset = kind[toAccountId] === 'asset';
+  if (fromAsset === toAsset) return null;
+  return toAsset ? { accountId: toAccountId, delta: qty } : { accountId, delta: -qty };
+}
+
+/** Terapkan perubahan jumlah unit ke rekening aset yang dilacak; menolak bila hasilnya di bawah nol. */
+async function moveQuantity(c, { accountId, delta }, { undo = false } = {}) {
+  const { rows } = await c.query(
+    `select quantity from savings_holding where account_id = $1 and price_source is not null and quantity is not null for update`,
+    [accountId],
+  );
+  if (!rows[0] && undo) return; // pelacakan sudah dimatikan: tidak ada jumlah unit yang perlu dikembalikan
+  if (!rows[0]) throw new HttpError(400, 'Rekening aset ini belum memakai harga pasar, jadi jumlah unit tidak bisa dicatat. Atur dulu di layar Tabungan.');
+  if (rows[0].quantity + delta < -1e-9) {
+    throw new HttpError(409, `Jumlah unit melebihi yang tercatat (${rows[0].quantity}). Perbaiki dulu jumlah di layar Tabungan.`);
+  }
+  await c.query(
+    `update savings_holding
+        set quantity = greatest(quantity + $2, 0),
+            current_value = case when unit_price is null then current_value else round(greatest(quantity + $2, 0) * unit_price) end
+      where account_id = $1`,
+    [accountId, delta],
+  );
 }
 
 /** Awal siklus untuk sebuah transaksi: gaji ke siklus gajian terdekat, lainnya menurut tanggal. */
@@ -143,15 +179,19 @@ export default async function trxRoutes(app) {
       const start = cycleFor(b.trx_date, category, u.payday_dom);
       const cycleId = await ensureCycle(c, u.household_id, start);
 
+      const effect = await assetEffect(c, accountId, toAccountId, b.asset_quantity);
+      if (b.asset_quantity != null && !effect) throw new HttpError(400, 'Jumlah unit hanya untuk Tabung atau Tarik pada rekening aset.');
+
       const { rows } = await c.query(
         `insert into trx (account_id, to_account_id, category_id, cycle_id, user_id,
-                          trx_date, kind, amount, note, is_one_off)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                          trx_date, kind, amount, note, is_one_off, asset_quantity)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          returning id`,
         [accountId, toAccountId, categoryId, cycleId, u.id,
-          b.trx_date, b.kind, b.amount, b.note?.trim() || null, b.kind === 'expense' && b.is_one_off],
+          b.trx_date, b.kind, b.amount, b.note?.trim() || null, b.kind === 'expense' && b.is_one_off, effect ? b.asset_quantity : null],
       );
       const id = rows[0].id;
+      if (effect) await moveQuantity(c, effect);
       if (b.from_emergency) {
         await c.query('insert into emergency_debt (withdrawal_trx_id, amount) values ($1, $2)', [id, b.amount]);
       }
@@ -182,7 +222,7 @@ export default async function trxRoutes(app) {
 
     return withTx(pool, async (c) => {
       const { rows } = await c.query(
-        `select t.id, t.kind, t.amount, t.account_id, t.to_account_id,
+        `select t.id, t.kind, t.amount, t.account_id, t.to_account_id, t.asset_quantity,
                 ed.id as debt_id, ed.status as debt_status, ed.amount as debt_amount,
                 (select count(*) from emergency_debt r where r.repayment_trx_id = t.id)::int as repays,
                 o.id as occ_id, opc.start_date as occ_cycle_start
@@ -213,12 +253,19 @@ export default async function trxRoutes(app) {
       if (t.occ_id && t.occ_cycle_start > start) start = t.occ_cycle_start;
       const cycleId = await ensureCycle(c, u.household_id, start);
 
+      // Jumlah unit: batalkan efek lama dulu, lalu terapkan yang baru.
+      const oldEffect = await assetEffect(c, t.account_id, t.to_account_id, t.asset_quantity);
+      if (oldEffect) await moveQuantity(c, { ...oldEffect, delta: -oldEffect.delta }, { undo: true });
+      const effect = await assetEffect(c, accountId, toAccountId, b.asset_quantity);
+      if (b.asset_quantity != null && !effect) throw new HttpError(400, 'Jumlah unit hanya untuk Tabung atau Tarik pada rekening aset.');
+      if (effect) await moveQuantity(c, effect);
+
       await c.query(
         `update trx set account_id = $2, to_account_id = $3, category_id = $4, cycle_id = $5, trx_date = $6,
-                kind = $7, amount = $8, note = $9, is_one_off = $10, updated_by = $11, updated_at = now()
+                kind = $7, amount = $8, note = $9, is_one_off = $10, asset_quantity = $12, updated_by = $11, updated_at = now()
           where id = $1`,
         [t.id, accountId, toAccountId, categoryId, cycleId, b.trx_date, b.kind, b.amount,
-          b.note?.trim() || null, b.kind === 'expense' && b.is_one_off, u.id],
+          b.note?.trim() || null, b.kind === 'expense' && b.is_one_off, u.id, effect ? b.asset_quantity : null],
       );
 
       // Utang yang masih terbuka ikut berubah sebesar selisih jumlahnya.
@@ -244,7 +291,7 @@ export default async function trxRoutes(app) {
     const u = req.user;
     await withTx(pool, async (c) => {
       const { rows } = await c.query(
-        `select t.id,
+        `select t.id, t.account_id, t.to_account_id, t.asset_quantity,
                 ed.id as debt_id, ed.status as debt_status,
                 (select count(*) from emergency_debt r where r.repayment_trx_id = t.id)::int as repays
            from trx t
@@ -259,6 +306,8 @@ export default async function trxRoutes(app) {
       if (t.debt_status === 'paid') throw new HttpError(409, 'Utang darurat ini sudah dilunasi. Batalkan pelunasannya dulu.');
       if (t.repays > 0) throw new HttpError(409, 'Transaksi ini adalah pelunasan utang darurat. Batalkan dari layar Rekening darurat.');
 
+      const effect = await assetEffect(c, t.account_id, t.to_account_id, t.asset_quantity);
+      if (effect) await moveQuantity(c, { ...effect, delta: -effect.delta }, { undo: true });
       if (t.debt_id) await c.query('delete from emergency_debt where id = $1', [t.debt_id]);
       const reset = await c.query(
         `update bill_occurrence set status = 'pending', transaction_id = null where transaction_id = $1 returning id`,
