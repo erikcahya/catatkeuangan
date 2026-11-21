@@ -92,7 +92,8 @@ a { color: var(--primary); text-decoration: none; }
   padding: 10px 16px; min-height: 48px; font-size: 14px;
 }
 .row > label, .row > .label { color: var(--muted); flex: none; }
-.row select, .row input[type="date"], .row .value {
+.row input[type="text"] { cursor: text; }
+.row select, .row input[type="date"], .row input[type="text"], .row .value {
   border: none; background: transparent; font-weight: 500; font-size: 14px;
   text-align: right; text-align-last: right; min-width: 0; max-width: 62%;
   padding: 6px 0; cursor: pointer;

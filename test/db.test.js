@@ -13,6 +13,7 @@ const skip = !url && 'TEST_DATABASE_URL belum diisi';
 if (url && url === process.env.DATABASE_URL) throw new Error('TEST_DATABASE_URL tidak boleh sama dengan DATABASE_URL');
 
 let pool, app, sid, erik, acc, cat;
+const quoteCalls = [];
 
 before(async () => {
   if (skip) return;
@@ -24,7 +25,13 @@ before(async () => {
   sid = newSessionToken();
   await pool.query(`insert into session (token_hash, user_id, expires_at) values ($1, $2, now() + interval '1 day')`,
     [hashToken(sid), erik.id]);
-  app = buildApp({ pool, logger: false });
+  // Harga pasar palsu: tes tidak boleh memanggil internet. Mengisi `calls` untuk memeriksa jumlah panggilan.
+  const prices = { 'crypto:BTC': 1_000_000_000, 'gold:XAU': 2_000_000, 'fx:CHF': 20_000 };
+  app = buildApp({ pool, logger: false, quote: async (source, symbol) => {
+    quoteCalls.push(`${source}:${symbol}`);
+    if (!(`${source}:${symbol}` in prices)) throw new Error(`Kode "${symbol}" tidak ditemukan.`);
+    return prices[`${source}:${symbol}`];
+  } });
   await app.ready();
 });
 
@@ -444,6 +451,81 @@ test('tabungan: setoran per aset, nilai sekarang manual', { skip }, async () => 
 
   // Bukan rekening aset ditolak.
   assert.equal((await put(acc['Rek. utama'], 1)).statusCode, 404);
+});
+
+test('tabungan: nilai dari jumlah unit x harga pasar, harga disimpan dan disegarkan', { skip }, async () => {
+  const get = async () => (await app.inject({ method: 'GET', url: '/api/savings', cookies: { sid } })).json();
+  const put = (name, payload) => app.inject({ method: 'PUT', url: `/api/savings/${acc[name]}/holding`, cookies: { sid }, payload });
+  const asset = async (name) => (await get()).assets.find((a) => a.name === name);
+
+  // Kripto: 0,05 BTC x Rp1 miliar = Rp50 juta.
+  quoteCalls.length = 0;
+  let r = await put('Kripto', { price_source: 'crypto', symbol: 'BTC', quantity: 0.05 });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.json().price_error, null);
+  let k = await asset('Kripto');
+  assert.equal(k.current_value, 50_000_000);
+  assert.equal(k.quantity, 0.05);
+  assert.equal(k.unit_price, 1_000_000_000);
+  assert.equal(k.price_source, 'crypto');
+  assert.equal(k.gain, 50_000_000 - k.net_invested);
+
+  // Harga masih segar: membuka layar lagi tidak memanggil sumber harga.
+  quoteCalls.length = 0;
+  await get();
+  assert.deepEqual(quoteCalls, []);
+
+  // Harga basi (> 30 menit) disegarkan otomatis; harga berubah -> nilai ikut berubah.
+  await pool.query(`update savings_holding set price_at = now() - interval '2 hours'`);
+  quoteCalls.length = 0;
+  await get();
+  assert.deepEqual(quoteCalls, ['crypto:BTC']);
+
+  // Emas dalam gram, valas dengan kode.
+  assert.equal((await put('Emas', { price_source: 'gold', quantity: 10 })).statusCode, 200);
+  assert.equal((await asset('Emas')).current_value, 20_000_000);
+  assert.equal((await put('Saham', { price_source: 'fx', symbol: 'chf', quantity: 1000 })).statusCode, 200);
+  assert.equal((await asset('Saham')).current_value, 20_000_000);
+
+  // Kode tidak dikenal: tersimpan tapi nilai tidak berubah dan pesan galat ikut dikembalikan.
+  r = await put('Kripto', { price_source: 'crypto', symbol: 'NOPE', quantity: 1 });
+  assert.equal(r.statusCode, 200);
+  assert.match(r.json().price_error, /NOPE/);
+  assert.equal((await asset('Kripto')).current_value, 50_000_000, 'nilai lama dipertahankan saat harga gagal');
+
+  // Sumber gagal saat segarkan otomatis: harga lama tetap dipakai, galat dilaporkan.
+  await pool.query(`update savings_holding set price_at = now() - interval '2 hours' where account_id = $1`, [acc['Kripto']]);
+  k = await asset('Kripto');
+  assert.equal(k.current_value, 50_000_000);
+  assert.match(k.price_error, /NOPE/);
+
+  // Isian tidak valid ditolak.
+  assert.equal((await put('Kripto', { price_source: 'crypto', symbol: '', quantity: 1 })).statusCode, 400);
+  assert.equal((await put('Kripto', { price_source: 'fx', symbol: 'CHFX', quantity: 1 })).statusCode, 400);
+  assert.equal((await put('Kripto', { price_source: 'crypto', symbol: 'BTC', quantity: 0 })).statusCode, 400);
+  assert.equal((await put('Kripto', { price_source: 'saham', symbol: 'BBCA', quantity: 1 })).statusCode, 400);
+  assert.equal((await put('Rek. utama', { price_source: 'crypto', symbol: 'BTC', quantity: 1 })).statusCode, 404);
+
+  // Tombol "Perbarui harga" memaksa ambil ulang semua.
+  quoteCalls.length = 0;
+  await pool.query(`update savings_holding set symbol = 'BTC' where account_id = $1`, [acc['Kripto']]);
+  const refresh = await app.inject({ method: 'POST', url: '/api/savings/refresh', cookies: { sid } });
+  assert.equal(refresh.statusCode, 200);
+  assert.equal(refresh.json().errors, 0);
+  assert.deepEqual(quoteCalls.sort(), ['crypto:BTC', 'fx:CHF', 'gold:XAU']);
+
+  // Mengisi nilai manual mematikan pelacakan harga.
+  const manual = await app.inject({ method: 'PUT', url: `/api/savings/${acc['Kripto']}/value`, cookies: { sid }, payload: { current_value: 7_000_000 } });
+  assert.equal(manual.statusCode, 200);
+  k = await asset('Kripto');
+  assert.equal(k.current_value, 7_000_000);
+  assert.equal(k.price_source, null);
+  assert.equal(k.quantity, null);
+  quoteCalls.length = 0;
+  await get();
+  assert.ok(!quoteCalls.includes('crypto:BTC'));
+
+  await pool.query('delete from savings_holding');
 });
 
 test('laporan siklus: per kategori, transfer tidak dihitung, anggaran bila ada', { skip }, async () => {

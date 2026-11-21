@@ -979,6 +979,19 @@ async function renderEmergency() {
 
 // ---------- Layar 5: tabungan dan investasi ----------
 
+const SOURCE_LABEL = { crypto: 'Kripto', gold: 'Emas', fx: 'Valas' };
+const jumlahUnit = (n) => Number(n).toLocaleString('id-ID', { maximumFractionDigits: 10 });
+function holdingText(a) {
+  const unit = a.price_source === 'gold' ? 'gram emas' : String(a.symbol ?? '').toUpperCase();
+  return `${jumlahUnit(a.quantity)} ${unit}${a.unit_price ? ` × ${rupiah(Math.round(a.unit_price))}` : ''}`;
+}
+function jamHarga(iso) {
+  const d = new Date(iso);
+  const hari = d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' });
+  const jam = d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' });
+  return `${hari} ${jam}`;
+}
+
 async function renderSavings() {
   const m = await loadMeta();
   if (!m.user.can_view_reports) { location.hash = '#/'; return; }
@@ -990,11 +1003,15 @@ async function renderSavings() {
       ? '<span class="warn-text tiny">Nilai sekarang belum diisi</span>'
       : `<span class="tile-label">Nilai sekarang ${rupiah(a.current_value)}${a.gain != null
         ? ` · <span class="${a.gain >= 0 ? 'in' : 'danger-text'}">${signed(a.gain)}</span>` : ''}</span>`;
+    const holding = a.price_source && a.quantity != null
+      ? `<span class="tile-label">${esc(holdingText(a))}${a.price_error ? ` · <span class="warn-text tiny" title="${esc(a.price_error)}">harga belum terbarui</span>` : (a.price_at ? ` · harga ${esc(jamHarga(a.price_at))}` : '')}</span>`
+      : '';
     return `<li><button type="button" class="trx-item link-row as-button" data-asset="${esc(a.account_id)}"
         aria-label="${esc(a.name)}: ubah nilai sekarang">
       <div class="main">
         <span class="name">${esc(a.name)}</span>
         <span class="tile-label">Total setoran ${rupiah(a.net_invested)}</span>
+        ${holding}
       </div>
       <div class="main end">
         <span class="amt strong">${signed(a.cycle_net)}</span>
@@ -1016,11 +1033,11 @@ async function renderSavings() {
       ${inv.count ? `<div class="note-box">Ada ${inv.count} transaksi (${rupiah(inv.amount)}) di kategori pengeluaran
         "Investasi" pada siklus ini. Itu dihitung sebagai pengeluaran, bukan setoran. Untuk setoran berikutnya pakai
         tombol "Tabung".</div>` : ''}
-      <div class="section-head"><h2>Per aset</h2></div>
+      <div class="section-head"><h2>Per aset</h2>${s.assets.some((a) => a.price_source) ? '<button type="button" class="btn-text" id="refresh-prices">Perbarui harga</button>' : ''}</div>
       ${s.assets.length
         ? `<ul class="trx-list">${s.assets.map(row).join('')}</ul>`
         : '<p class="empty">Belum ada rekening berjenis aset.</p>'}
-      <p class="tile-label">Nilai sekarang diisi manual dan boleh dikosongkan; tekan aset untuk mengubahnya.
+      <p class="tile-label">Tekan aset untuk mengisi nilainya: manual (boleh dikosongkan) atau otomatis dari jumlah unit dan harga pasar.
         Total setoran dihitung dari yang Anda tabung, dikurangi yang ditarik kembali.</p>
     </div>
     ${dock(s.assets.length ? '<a class="btn-primary as-link" href="#/tabungan/setor">Tabung</a><a class="btn-text" href="#/tabungan/tarik">Tarik tabungan</a>' : '', '')}
@@ -1028,43 +1045,105 @@ async function renderSavings() {
   <dialog id="value-dialog" class="sheet" aria-labelledby="value-title"></dialog>`;
 
   const dlg = document.getElementById('value-dialog');
+  document.getElementById('refresh-prices')?.addEventListener('click', async (ev) => {
+    ev.currentTarget.disabled = true;
+    try {
+      const r = await api('/api/savings/refresh', { method: 'POST' });
+      toast(r.errors ? 'Sebagian harga gagal diperbarui.' : 'Harga diperbarui.', { warn: !!r.errors });
+    } catch (ex) { toast(ex.message, { warn: true }); }
+    renderSavings();
+  });
   app.querySelectorAll('[data-asset]').forEach((btn) => btn.addEventListener('click', () => {
     const a = s.assets.find((x) => x.account_id === btn.dataset.asset);
+    const tracked = !!a.price_source;
     dlg.innerHTML = `<form class="sheet-body" novalidate>
       <h2 id="value-title" class="title">Nilai ${esc(a.name)} sekarang</h2>
       <div class="error" hidden></div>
-      <div class="card field amount">
-        <label for="v-amount">Nilai sekarang (kosongkan bila tidak tahu)</label>
-        <input id="v-amount" inputmode="numeric" autocomplete="off" placeholder="Rp 0"
-          value="${a.current_value == null ? '' : rupiah(a.current_value)}">
+      <div class="segmented" role="group" aria-label="Cara mengisi nilai">
+        <button type="button" data-mode="manual" aria-pressed="${!tracked}">Isi manual</button>
+        <button type="button" data-mode="market" aria-pressed="${tracked}">Harga pasar</button>
       </div>
-      <p class="tile-label">Total setoran ${rupiah(a.net_invested)}${a.as_of_date ? ` · terakhir diisi ${esc(tanggal(a.as_of_date))}` : ''}</p>
+      <div id="mode-manual"${tracked ? ' hidden' : ''}>
+        <div class="card field amount">
+          <label for="v-amount">Nilai sekarang (kosongkan bila tidak tahu)</label>
+          <input id="v-amount" inputmode="numeric" autocomplete="off" placeholder="Rp 0"
+            value="${a.current_value == null || tracked ? '' : rupiah(a.current_value)}">
+        </div>
+      </div>
+      <div id="mode-market"${tracked ? '' : ' hidden'}>
+        <div class="card rows">
+          <div class="row"><label for="m-source">Jenis</label>
+            <select id="m-source">${Object.entries(SOURCE_LABEL).map(([v, l]) => `<option value="${v}"${a.price_source === v ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+          <div class="row" id="m-symbol-row"><label for="m-symbol" id="m-symbol-label">Kode</label>
+            <input id="m-symbol" type="text" autocomplete="off" autocapitalize="characters" maxlength="40" value="${esc(a.price_source === 'gold' ? '' : (a.symbol ?? ''))}"></div>
+        </div>
+        <div class="card field">
+          <label for="m-qty" id="m-qty-label">Jumlah</label>
+          <input id="m-qty" inputmode="decimal" autocomplete="off" placeholder="0,05" value="${a.quantity == null ? '' : esc(jumlahUnit(a.quantity))}">
+        </div>
+        <p class="tile-label" id="m-hint"></p>
+      </div>
+      <p class="tile-label">Total setoran ${rupiah(a.net_invested)}${a.as_of_date ? ` · nilai per ${esc(tanggal(a.as_of_date))}` : ''}</p>
       <button class="btn-primary" type="submit">Simpan</button>
       <div class="sheet-actions"><span></span><button type="button" class="btn-text" id="v-cancel">Batal</button></div>
     </form>`;
     const f = dlg.querySelector('form');
     const amt = f.querySelector('#v-amount');
+    let mode = tracked ? 'market' : 'manual';
+    const source = f.querySelector('#m-source');
+    const HINTS = {
+      crypto: ['Kode koin', 'Jumlah koin', 'Contoh kode: BTC, ETH, SOL. Harga dari CoinGecko dalam Rupiah. Untuk koin lain, isi id CoinGecko-nya (mis. chainlink).'],
+      gold: ['', 'Jumlah (gram)', 'Harga emas dunia per gram dalam Rupiah (bukan harga jual-beli Antam atau Pegadaian, biasanya sedikit lebih tinggi).'],
+      fx: ['Kode mata uang', 'Jumlah', 'Contoh kode: CHF, USD, EUR, SGD. Kurs ke Rupiah diperbarui sekali sehari.'],
+    };
+    const syncSource = () => {
+      const [symLabel, qtyLabel, hint] = HINTS[source.value];
+      f.querySelector('#m-symbol-row').hidden = source.value === 'gold';
+      f.querySelector('#m-symbol-label').textContent = symLabel;
+      f.querySelector('#m-qty-label').textContent = qtyLabel;
+      f.querySelector('#m-hint').textContent = `${hint} Desimal pakai koma.`;
+    };
+    source.addEventListener('change', syncSource);
+    syncSource();
+    f.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => {
+      mode = b.dataset.mode;
+      f.querySelectorAll('[data-mode]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      f.querySelector('#mode-manual').hidden = mode !== 'manual';
+      f.querySelector('#mode-market').hidden = mode !== 'market';
+    }));
     amt.addEventListener('input', () => { const n = parseRupiah(amt.value); amt.value = amt.value.trim() ? rupiah(n) : ''; });
     f.querySelector('#v-cancel').addEventListener('click', () => dlg.close());
     f.addEventListener('submit', async (ev) => {
       ev.preventDefault();
-      const raw = amt.value.trim();
+      const err = f.querySelector('.error');
+      err.hidden = true;
       try {
-        await api(`/api/savings/${a.account_id}/value`, {
-          method: 'PUT',
-          body: { current_value: raw ? parseRupiah(raw) : null },
-        });
-        dlg.close();
-        toast(raw ? `Nilai ${a.name} disimpan.` : `Nilai ${a.name} dikosongkan.`);
+        if (mode === 'market') {
+          const qty = Number(f.querySelector('#m-qty').value.trim().replace(/\s/g, '').replace(',', '.'));
+          if (!(qty > 0)) throw new Error('Isi jumlah yang lebih dari 0.');
+          const r = await api(`/api/savings/${a.account_id}/holding`, {
+            method: 'PUT',
+            body: { price_source: source.value, symbol: source.value === 'gold' ? null : f.querySelector('#m-symbol').value, quantity: qty },
+          });
+          dlg.close();
+          toast(r.price_error ? `Tersimpan, tapi harga belum didapat: ${r.price_error}` : `${a.name} dihitung dari harga pasar.`, { warn: !!r.price_error });
+        } else {
+          const raw = amt.value.trim();
+          await api(`/api/savings/${a.account_id}/value`, {
+            method: 'PUT',
+            body: { current_value: raw ? parseRupiah(raw) : null },
+          });
+          dlg.close();
+          toast(raw ? `Nilai ${a.name} disimpan.` : `Nilai ${a.name} dikosongkan.`);
+        }
         renderSavings();
       } catch (ex) {
-        const err = f.querySelector('.error');
         err.textContent = ex.message;
         err.hidden = false;
       }
     });
     dlg.showModal();
-    amt.focus();
+    (tracked ? f.querySelector('#m-qty') : amt).focus();
   }));
 }
 

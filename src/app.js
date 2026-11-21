@@ -14,13 +14,15 @@ import reportRoutes from './routes/report.js';
 import memberRoutes from './routes/members.js';
 import budgetRoutes from './routes/budgets.js';
 import balanceRoutes from './routes/balance.js';
+import { quote as marketQuote } from './lib/market.js';
 
 const PUBLIC_DIR = fileURLToPath(new URL('../public/', import.meta.url));
 const OPEN_ROUTES = new Set(['/api/auth/login']);
 
-export function buildApp({ pool, logger = true } = {}) {
+export function buildApp({ pool, logger = true, quote = marketQuote } = {}) {
   const app = Fastify({ logger, trustProxy: true });
   app.decorate('pg', pool);
+  app.decorate('quote', quote); // sumber harga pasar; tes menggantinya dengan harga palsu
   app.decorateRequest('user', null);
 
   app.register(cookie);

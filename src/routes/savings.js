@@ -1,5 +1,8 @@
 import { HttpError } from '../lib/errors.js';
 import { cycleEnd, cycleLabel, cycleStart, isValidDate, todayJakarta } from '../lib/dates.js';
+import { SOURCES } from '../lib/market.js';
+
+const PRICE_TTL_MS = 30 * 60 * 1000; // harga dianggap basi setelah 30 menit
 
 const uuid = { type: 'string', format: 'uuid' };
 
@@ -17,10 +20,43 @@ function assetType(name) {
  * Tabungan dan investasi = rekening berjenis 'asset'.
  * Setoran = transfer ke rekening aset; penarikan = transfer dari rekening aset.
  * Total setoran bersih = semua setoran - semua penarikan (sepanjang waktu).
- * Nilai sekarang diisi manual dan boleh kosong.
+ * Nilai sekarang diisi manual dan boleh kosong, atau dihitung otomatis: jumlah unit x harga pasar.
  */
 export default async function savingsRoutes(app) {
   const pool = app.pg;
+
+  /**
+   * Perbarui harga aset yang mengikuti pasar. Gagal di satu aset tidak menghentikan yang lain:
+   * harga lama tetap dipakai dan pesan galatnya dikembalikan per rekening.
+   */
+  async function refreshPrices(householdId, { force = false, accountId = null } = {}) {
+    const { rows } = await pool.query(
+      `select h.id, h.account_id, h.price_source, h.symbol, h.quantity, h.price_at
+         from savings_holding h join account a on a.id = h.account_id
+        where a.household_id = $1 and h.price_source is not null and h.quantity is not null
+          and ($2::uuid is null or h.account_id = $2)`,
+      [householdId, accountId],
+    );
+    const errors = {};
+    const cache = new Map();
+    await Promise.all(rows.map(async (h) => {
+      if (!force && h.price_at && Date.now() - new Date(h.price_at).getTime() < PRICE_TTL_MS) return;
+      const key = `${h.price_source}:${h.symbol ?? ''}`;
+      try {
+        if (!cache.has(key)) cache.set(key, app.quote(h.price_source, h.symbol));
+        const price = await cache.get(key);
+        await pool.query(
+          `update savings_holding
+              set unit_price = $2, price_at = now(), current_value = round(quantity * $2), as_of_date = $3
+            where id = $1`,
+          [h.id, price, todayJakarta()],
+        );
+      } catch (ex) {
+        errors[h.account_id] = ex.message;
+      }
+    }));
+    return errors;
+  }
 
   app.get('/api/savings', {
     schema: { querystring: { type: 'object', properties: { cycle: { type: 'string' } } } },
@@ -31,6 +67,7 @@ export default async function savingsRoutes(app) {
     const start = req.query.cycle ?? current;
     if (!isValidDate(start) || cycleStart(start, u.payday_dom) !== start) throw new HttpError(400, 'Siklus tidak valid.');
 
+    const priceErrors = await refreshPrices(u.household_id);
     const [assets, investExpense] = await Promise.all([
       pool.query(
         `select a.id as account_id, a.name,
@@ -38,14 +75,15 @@ export default async function savingsRoutes(app) {
                 coalesce(sum(t.amount) filter (where t.account_id = a.id), 0)    as total_out,
                 coalesce(sum(t.amount) filter (where t.to_account_id = a.id and pc.start_date = $2), 0) as cycle_in,
                 coalesce(sum(t.amount) filter (where t.account_id = a.id and pc.start_date = $2), 0)    as cycle_out,
-                h.current_value, h.as_of_date
+                h.current_value, h.as_of_date,
+                h.price_source, h.symbol, h.quantity, h.unit_price, h.price_at
            from account a
            left join trx t on (t.to_account_id = a.id or t.account_id = a.id)
                           and t.kind = 'transfer' and t.deleted_at is null
            left join pay_cycle pc on pc.id = t.cycle_id
            left join savings_holding h on h.account_id = a.id
           where a.household_id = $1 and a.kind = 'asset'
-          group by a.id, a.name, h.current_value, h.as_of_date
+          group by a.id, a.name, h.current_value, h.as_of_date, h.price_source, h.symbol, h.quantity, h.unit_price, h.price_at
           order by a.name`,
         [u.household_id, start],
       ),
@@ -68,6 +106,7 @@ export default async function savingsRoutes(app) {
         net_invested: net,
         cycle_net: r.cycle_in - r.cycle_out,
         gain: r.current_value == null ? null : r.current_value - net,
+        price_error: priceErrors[r.account_id] ?? null,
       };
     });
     return {
@@ -107,9 +146,57 @@ export default async function savingsRoutes(app) {
     await pool.query(
       `insert into savings_holding (account_id, asset_type, name, current_value, as_of_date)
        values ($1, $2, $3, $4, $5)
-       on conflict (account_id) do update set current_value = excluded.current_value, as_of_date = excluded.as_of_date`,
+       on conflict (account_id) do update set current_value = excluded.current_value, as_of_date = excluded.as_of_date,
+         price_source = null, symbol = null, quantity = null, unit_price = null, price_at = null`,
       [acc.id, assetType(acc.name), acc.name, value, asOf],
     );
     return { ok: true };
+  });
+
+  // Hitung nilai dari jumlah unit x harga pasar. Menggantikan nilai manual sampai dimatikan.
+  app.put('/api/savings/:accountId/holding', {
+    schema: {
+      params: { type: 'object', properties: { accountId: uuid }, required: ['accountId'] },
+      body: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['price_source', 'quantity'],
+        properties: {
+          price_source: { type: 'string', enum: SOURCES },
+          symbol: { type: ['string', 'null'], maxLength: 40 },
+          quantity: { type: 'number', exclusiveMinimum: 0, maximum: 1e12 },
+        },
+      },
+    },
+  }, async (req) => {
+    requireReports(req);
+    const u = req.user;
+    const { rows } = await pool.query(
+      `select id, name from account where id = $1 and household_id = $2 and kind = 'asset'`,
+      [req.params.accountId, u.household_id],
+    );
+    const acc = rows[0];
+    if (!acc) throw new HttpError(404, 'Rekening aset tidak ditemukan.');
+    const { price_source: source, quantity } = req.body;
+    const typed = (req.body.symbol ?? '').trim();
+    const symbol = source === 'gold' ? 'XAU' : source === 'fx' ? typed.toUpperCase() : typed;
+    if (source === 'crypto' && !/^[A-Za-z0-9._-]{1,40}$/.test(symbol)) throw new HttpError(400, 'Isi kode koin, mis. BTC atau ETH.');
+    if (source === 'fx' && !/^[A-Za-z]{3}$/.test(symbol)) throw new HttpError(400, 'Isi kode mata uang 3 huruf, mis. CHF atau USD.');
+    await pool.query(
+      `insert into savings_holding (account_id, asset_type, name, price_source, symbol, quantity, unit_price, price_at)
+       values ($1, $2, $3, $4, $5, $6, null, null)
+       on conflict (account_id) do update set price_source = excluded.price_source, symbol = excluded.symbol,
+         quantity = excluded.quantity, unit_price = null, price_at = null`,
+      [acc.id, assetType(acc.name), acc.name, source, symbol, quantity],
+    );
+    const errors = await refreshPrices(u.household_id, { force: true, accountId: acc.id });
+    return { ok: true, price_error: errors[acc.id] ?? null };
+  });
+
+  // Tombol "Perbarui harga": paksa ambil ulang semua harga pasar.
+  app.post('/api/savings/refresh', async (req) => {
+    requireReports(req);
+    const errors = await refreshPrices(req.user.household_id, { force: true });
+    return { ok: true, errors: Object.keys(errors).length };
   });
 }
