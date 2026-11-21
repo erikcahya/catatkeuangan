@@ -567,6 +567,32 @@ test('tabungan: nilai dari jumlah unit x harga pasar, harga disimpan dan disegar
   await app.inject({ method: 'PUT', url: `/api/savings/${acc['Emas']}/value`, cookies: { sid }, payload: { current_value: 1 } });
   assert.equal((await trx('DELETE', `/api/trx/${buy2.json().item.id}`)).statusCode, 200);
 
+  // Mulai melacak aset yang sudah dimiliki: 0,1 BTC dicatat juga sebagai Tabung senilai pasar (Rp100 juta) dari Rek. utama,
+  // tanpa menambah jumlah unit lagi.
+  const depBefore = (await pool.query(`select count(*)::int n from trx where kind = 'transfer' and to_account_id = $1`, [acc['Kripto']])).rows[0].n;
+  const start = await put('Kripto', { price_source: 'crypto', symbol: 'BTC', quantity: 0.1, record_deposit: true });
+  assert.equal(start.statusCode, 200);
+  assert.equal(start.json().deposit.amount, 100_000_000);
+  assert.equal(await qty('Kripto'), 0.1);
+  const dep = (await pool.query(`select amount, account_id, asset_quantity from trx where kind = 'transfer' and to_account_id = $1 and deleted_at is null`, [acc['Kripto']])).rows;
+  assert.equal(dep.length, depBefore + 1);
+  assert.equal(dep.at(-1).amount, 100_000_000);
+  assert.equal(dep.at(-1).account_id, acc['Rek. utama']);
+  assert.equal(dep.at(-1).asset_quantity, null);
+  // Mengubah jumlah saat sudah dilacak tidak mencatat Tabung lagi.
+  const again = await put('Kripto', { price_source: 'crypto', symbol: 'BTC', quantity: 0.1, record_deposit: true });
+  assert.equal(again.json().deposit, null);
+
+  // Jumlah unit dikosongkan: dihitung dari Rupiah / harga pasar terakhir. Rp50 juta = 0,05 BTC.
+  const auto = await move('Rek. utama', 'Kripto', 50_000_000, undefined);
+  assert.equal(auto.statusCode, 201);
+  assert.equal(auto.json().item.asset_quantity, 0.05);
+  assert.equal(await qty('Kripto'), 0.15);
+  assert.equal((await asset('Kripto')).current_value, 150_000_000);
+  // Menjual senilai seluruh aset = menjual semua unit (nol, tetap dilacak).
+  assert.equal((await move('Kripto', 'Rek. utama', 150_000_000, undefined)).statusCode, 201);
+  assert.equal(await qty('Kripto'), 0);
+
   await pool.query('delete from savings_holding');
 });
 

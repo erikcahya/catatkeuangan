@@ -1,6 +1,8 @@
 import { HttpError } from '../lib/errors.js';
 import { cycleEnd, cycleLabel, cycleStart, isValidDate, todayJakarta } from '../lib/dates.js';
 import { SOURCES } from '../lib/market.js';
+import { withTx } from '../db.js';
+import { ensureCycle } from '../lib/cycles.js';
 
 const PRICE_TTL_MS = 30 * 60 * 1000; // harga dianggap basi setelah 30 menit
 
@@ -165,6 +167,8 @@ export default async function savingsRoutes(app) {
           price_source: { type: 'string', enum: SOURCES },
           symbol: { type: ['string', 'null'], maxLength: 40 },
           quantity: { type: 'number', exclusiveMinimum: 0, maximum: 1e12 },
+          // Hanya berlaku saat aset baru mulai dilacak: catat nilai pasar hari ini sebagai Tabung dari Rek. utama.
+          record_deposit: { type: 'boolean', default: false },
         },
       },
     },
@@ -182,6 +186,7 @@ export default async function savingsRoutes(app) {
     const symbol = source === 'gold' ? 'XAU' : source === 'fx' ? typed.toUpperCase() : typed;
     if (source === 'crypto' && !/^[A-Za-z0-9._-]{1,40}$/.test(symbol)) throw new HttpError(400, 'Isi kode koin, mis. BTC atau ETH.');
     if (source === 'fx' && !/^[A-Za-z]{3}$/.test(symbol)) throw new HttpError(400, 'Isi kode mata uang 3 huruf, mis. CHF atau USD.');
+    const wasTracked = (await pool.query('select price_source from savings_holding where account_id = $1', [acc.id])).rows[0]?.price_source != null;
     await pool.query(
       `insert into savings_holding (account_id, asset_type, name, price_source, symbol, quantity, unit_price, price_at)
        values ($1, $2, $3, $4, $5, $6, null, null)
@@ -190,8 +195,33 @@ export default async function savingsRoutes(app) {
       [acc.id, assetType(acc.name), acc.name, source, symbol, quantity],
     );
     const errors = await refreshPrices(u.household_id, { force: true, accountId: acc.id });
-    return { ok: true, price_error: errors[acc.id] ?? null };
+    let deposit = null;
+    if (req.body.record_deposit && !wasTracked && !errors[acc.id]) {
+      const value = (await pool.query('select current_value from savings_holding where account_id = $1', [acc.id])).rows[0]?.current_value;
+      if (value > 0) deposit = await recordOpeningDeposit(u, acc.id, value);
+    }
+    return { ok: true, price_error: errors[acc.id] ?? null, deposit };
   });
+
+  /** Aset yang sudah dimiliki sebelum memakai aplikasi: dicatat sebagai Tabung (jumlah unit sudah diisi, jadi tidak ditambah lagi). */
+  async function recordOpeningDeposit(u, assetId, amount) {
+    const from = (await pool.query(
+      `select id from account where household_id = $1 and kind <> 'asset' and not is_emergency
+        order by (name = 'Rek. utama') desc, name limit 1`,
+      [u.household_id],
+    )).rows[0];
+    if (!from) return null;
+    const today = todayJakarta();
+    return withTx(pool, async (c) => {
+      const cycleId = await ensureCycle(c, u.household_id, cycleStart(today, u.payday_dom));
+      await c.query(
+        `insert into trx (account_id, to_account_id, category_id, cycle_id, user_id, trx_date, kind, amount, note)
+         values ($1, $2, null, $3, $4, $5, 'transfer', $6, 'Modal awal aset (nilai pasar saat mulai dilacak)')`,
+        [from.id, assetId, cycleId, u.id, today, amount],
+      );
+      return { amount, from_account_id: from.id };
+    });
+  }
 
   // Tombol "Perbarui harga": paksa ambil ulang semua harga pasar.
   app.post('/api/savings/refresh', async (req) => {

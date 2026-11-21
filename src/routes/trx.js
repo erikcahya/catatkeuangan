@@ -85,6 +85,26 @@ async function assetEffect(c, accountId, toAccountId, qty) {
   return toAsset ? { accountId: toAccountId, delta: qty } : { accountId, delta: -qty };
 }
 
+/**
+ * Tabung/Tarik pada aset yang dilacak tanpa jumlah unit: dihitung dari Rupiah / harga pasar terakhir.
+ * Menjual hampir seluruh unit (selisih pembulatan) dihitung sebagai semuanya.
+ */
+async function deriveQuantity(c, accountId, toAccountId, amount) {
+  if (!toAccountId) return null;
+  const { rows } = await c.query('select id, kind from account where id = any($1::uuid[])', [[accountId, toAccountId]]);
+  const kind = Object.fromEntries(rows.map((r) => [r.id, r.kind]));
+  if ((kind[accountId] === 'asset') === (kind[toAccountId] === 'asset')) return null;
+  const assetId = kind[toAccountId] === 'asset' ? toAccountId : accountId;
+  const h = (await c.query(
+    `select quantity, unit_price from savings_holding where account_id = $1 and price_source is not null and quantity is not null and unit_price > 0`,
+    [assetId],
+  )).rows[0];
+  if (!h) return null;
+  let q = Number((amount / h.unit_price).toFixed(10));
+  if (assetId === accountId && q > h.quantity && q <= h.quantity * 1.001) q = h.quantity;
+  return q > 0 ? q : null;
+}
+
 /** Terapkan perubahan jumlah unit ke rekening aset yang dilacak; menolak bila hasilnya di bawah nol. */
 async function moveQuantity(c, { accountId, delta }, { undo = false } = {}) {
   const { rows } = await c.query(
@@ -179,7 +199,8 @@ export default async function trxRoutes(app) {
       const start = cycleFor(b.trx_date, category, u.payday_dom);
       const cycleId = await ensureCycle(c, u.household_id, start);
 
-      const effect = await assetEffect(c, accountId, toAccountId, b.asset_quantity);
+      const qty = b.asset_quantity ?? (b.kind === 'transfer' ? await deriveQuantity(c, accountId, toAccountId, b.amount) : null);
+      const effect = await assetEffect(c, accountId, toAccountId, qty);
       if (b.asset_quantity != null && !effect) throw new HttpError(400, 'Jumlah unit hanya untuk Tabung atau Tarik pada rekening aset.');
 
       const { rows } = await c.query(
@@ -188,7 +209,7 @@ export default async function trxRoutes(app) {
          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          returning id`,
         [accountId, toAccountId, categoryId, cycleId, u.id,
-          b.trx_date, b.kind, b.amount, b.note?.trim() || null, b.kind === 'expense' && b.is_one_off, effect ? b.asset_quantity : null],
+          b.trx_date, b.kind, b.amount, b.note?.trim() || null, b.kind === 'expense' && b.is_one_off, effect ? qty : null],
       );
       const id = rows[0].id;
       if (effect) await moveQuantity(c, effect);

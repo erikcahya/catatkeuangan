@@ -386,7 +386,8 @@ async function renderAdd(preset = {}) {
       </div>
       <div class="card field" id="row-units" hidden>
         <label for="units" id="units-label">Jumlah unit</label>
-        <input id="units" name="units" inputmode="decimal" autocomplete="off" placeholder="0,5">
+        <input id="units" name="units" inputmode="decimal" autocomplete="off" placeholder="Kosongkan = dihitung otomatis">
+        <span class="tile-label" id="units-est"></span>
       </div>
       <p class="tile-label" id="units-hint" hidden>Mau mencatat dalam gram atau koin? Atur aset ini ke <b>Harga pasar</b> dulu di <a href="#/tabungan">Tabungan</a>.</p>
       <div class="card rows">
@@ -497,16 +498,27 @@ async function renderAdd(preset = {}) {
     show('row-units', !!a);
     const moving = state.kind === 'saving' || state.kind === 'withdraw';
     show('units-hint', moving && !a);
-    if (a) document.getElementById('units-label').textContent = `${state.kind === 'saving' ? 'Jumlah dibeli' : 'Jumlah dijual'} (${unitText(a)}), boleh dikosongkan`;
+    if (a) document.getElementById('units-label').textContent = `${state.kind === 'saving' ? 'Jumlah dibeli' : 'Jumlah dijual'} (${unitText(a)})`;
+    estimateUnits();
+  }
+  // Bila dikosongkan, server menghitung jumlah unit dari Rupiah / harga pasar terakhir.
+  function estimateUnits() {
+    const a = trackedAsset();
+    const est = document.getElementById('units-est');
+    const n = parseRupiah(form.amount.value);
+    est.textContent = a?.unit_price && n && !unitsEl.value.trim()
+      ? `Dikosongkan: otomatis ≈ ${jumlahUnit(Number((n / a.unit_price).toFixed(8)))} ${unitText(a)} (harga pasar terakhir)`
+      : (a ? 'Isi sendiri bila jumlahnya dari struk berbeda dengan harga pasar.' : '');
   }
   form.account.addEventListener('change', syncUnits);
   form.to_account.addEventListener('change', syncUnits);
-  form.amount.addEventListener('input', () => { amountTyped = true; });
+  form.amount.addEventListener('input', () => { amountTyped = true; estimateUnits(); });
   unitsEl.addEventListener('input', () => {
     // Perkiraan Rupiah dari harga pasar bila jumlahnya belum diisi sendiri.
     const a = trackedAsset();
     const q = parseUnits();
     if (!edit && a?.unit_price && q > 0 && !amountTyped) form.amount.value = rupiah(Math.round(q * a.unit_price));
+    estimateUnits();
   });
 
   form.querySelectorAll('[data-kind]').forEach((b) => b.addEventListener('click', () => {
@@ -1133,6 +1145,10 @@ async function renderSavings() {
         </div>
         <p class="tile-label">Anda hanya mengisi <b>jumlah unit</b> yang dimiliki. Harga dan nilainya diambil otomatis dari pasar, tanpa mengetik nilai Rupiah.</p>
         <p class="tile-label" id="m-hint"></p>
+        ${tracked ? '' : `<label class="card rows"><span class="row toggle">
+          <span class="text"><span>Catat juga sebagai Tabung</span>
+            <span class="hint">Nilai pasar hari ini, dari rekening utama. Menambah "Ditabung" siklus ini dan mengurangi saldo rekening utama.</span></span>
+          <input type="checkbox" id="m-deposit" checked></span></label>`}
       </div>
       <p class="tile-label">Total setoran ${rupiah(a.net_invested)}${a.as_of_date ? ` · nilai per ${esc(tanggal(a.as_of_date))}` : ''}</p>
       <button class="btn-primary" type="submit">Simpan</button>
@@ -1174,11 +1190,14 @@ async function renderSavings() {
           if (!(qty > 0)) throw new Error('Isi jumlah yang lebih dari 0.');
           const r = await api(`/api/savings/${a.account_id}/holding`, {
             method: 'PUT',
-            body: { price_source: source.value, symbol: source.value === 'gold' ? null : f.querySelector('#m-symbol').value, quantity: qty },
+            body: { price_source: source.value, symbol: source.value === 'gold' ? null : f.querySelector('#m-symbol').value, quantity: qty,
+              record_deposit: !!f.querySelector('#m-deposit')?.checked },
           });
           dlg.close();
           meta = null;
-          toast(r.price_error ? `Tersimpan, tapi harga belum didapat: ${r.price_error}` : `${a.name} dihitung dari harga pasar.`, { warn: !!r.price_error });
+          toast(r.price_error ? `Tersimpan, tapi harga belum didapat: ${r.price_error}`
+            : r.deposit ? `${a.name} dihitung dari harga pasar dan dicatat sebagai Tabung ${rupiah(r.deposit.amount)}.`
+              : `${a.name} dihitung dari harga pasar.`, { warn: !!r.price_error });
         } else {
           const raw = amt.value.trim();
           await api(`/api/savings/${a.account_id}/value`, {
