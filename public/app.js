@@ -388,6 +388,7 @@ async function renderAdd(preset = {}) {
         <label for="units" id="units-label">Jumlah unit</label>
         <input id="units" name="units" inputmode="decimal" autocomplete="off" placeholder="0,5">
       </div>
+      <p class="tile-label" id="units-hint" hidden>Mau mencatat dalam gram atau koin? Atur aset ini ke <b>Harga pasar</b> dulu di <a href="#/tabungan">Tabungan</a>.</p>
       <div class="card rows">
         <div class="row" id="row-category">
           <label for="category">Kategori</label>
@@ -494,6 +495,8 @@ async function renderAdd(preset = {}) {
   function syncUnits() {
     const a = trackedAsset();
     show('row-units', !!a);
+    const moving = state.kind === 'saving' || state.kind === 'withdraw';
+    show('units-hint', moving && !a);
     if (a) document.getElementById('units-label').textContent = `${state.kind === 'saving' ? 'Jumlah dibeli' : 'Jumlah dijual'} (${unitText(a)}), boleh dikosongkan`;
   }
   form.account.addEventListener('change', syncUnits);
