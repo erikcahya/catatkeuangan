@@ -603,6 +603,16 @@ test('tabungan: nilai dari jumlah unit x harga pasar, harga disimpan dan disegar
   assert.equal((await move('Kripto', 'Rek. utama', 150_000_000, undefined)).statusCode, 201);
   assert.equal(await qty('Kripto'), 0);
 
+  // Total dikoreksi turun sendiri, lalu transaksi Tabung lama dihapus: tetap bisa (jumlah dipangkas ke 0), bukan galat 409.
+  const old1 = await move('Rek. utama', 'Kripto', 100_000_000, undefined);
+  assert.equal(old1.statusCode, 201);
+  await put('Kripto', { price_source: 'crypto', symbol: 'BTC', quantity: 0.0000001 });
+  assert.equal((await trx('DELETE', `/api/trx/${old1.json().item.id}`)).statusCode, 200);
+  assert.equal(await qty('Kripto'), 0);
+  // Tarik melebihi jumlah tercatat tetap ditolak.
+  await put('Kripto', { price_source: 'crypto', symbol: 'BTC', quantity: 0.01 });
+  assert.equal((await move('Kripto', 'Rek. utama', 50_000_000, 0.05)).statusCode, 409);
+
   await pool.query('delete from savings_holding');
 });
 

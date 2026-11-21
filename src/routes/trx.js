@@ -113,7 +113,8 @@ async function moveQuantity(c, { accountId, delta }, { undo = false } = {}) {
   );
   if (!rows[0] && undo) return; // pelacakan sudah dimatikan: tidak ada jumlah unit yang perlu dikembalikan
   if (!rows[0]) throw new HttpError(400, 'Rekening aset ini belum memakai harga pasar, jadi jumlah unit tidak bisa dicatat. Atur dulu di layar Tabungan.');
-  if (rows[0].quantity + delta < -1e-9) {
+  // Membatalkan transaksi lama (hapus/ubah) tidak boleh terhalang jumlah yang sudah dikoreksi sendiri: hasilnya dipangkas ke 0.
+  if (!undo && rows[0].quantity + delta < -1e-9) {
     throw new HttpError(409, `Jumlah unit melebihi yang tercatat (${rows[0].quantity}). Perbaiki dulu jumlah di layar Tabungan.`);
   }
   await c.query(
